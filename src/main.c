@@ -38,11 +38,9 @@ void maprequest(XEvent *ev) {
     headtile = newtile;
     newtile->parent = NULL;
     newtile->next = NULL;
-
   } else {
     // add this tile to the end of the linked list
     // so, go to latest tile
-
     Tile *tile = headtile;
     while (tile->next != NULL) {
       tile = tile->next;
