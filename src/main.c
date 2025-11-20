@@ -4,34 +4,112 @@
 #include <string.h>
 #include <stdio.h>
 
+#include "main.h"
 #include "defs.h"
 
-Display *dpy;
-Window root;
-
-int screenw, screenh;
-
-Atom _NET_SUPPORTING_WM_CHECK;
-Atom _NET_NUBER_OF_DESKTOPS;
-Atom _NET_WM_NAME;
-
-Atom UTF8_STRING;
-
-// TEMP
-// each virtual desktop needs it's own mapped count
-int totalmapped;
-
-char KeysymToString(XKeyEvent *xkey) {
-  return *XKeysymToString(XLookupKeysym(xkey, 0));
-}
-
-void key_press(XKeyEvent *xkey) {
+void keypress(XEvent *ev) {
+  XKeyEvent *xkey = &ev->xkey;
   if (KeysymToString(xkey) == 'q' && xkey->state == Mod1Mask) {
     exit(0);
   }
 }
 
-// atoms are workspaces or something idk
+void maprequest(XEvent *ev) {
+  XMapRequestEvent *mapreq = &ev->xmaprequest;
+  
+  Tile *newtile = (Tile *)malloc(sizeof(Tile));
+  newtile->win = mapreq->window;
+
+  /* structure:
+   * each index is a tile
+   * each tile has both a parent and the next tile
+   *
+   * head/1 (parent NULL, next 2)
+   * 2 (parent 1, next 3)
+   * 3 (parent 2, next 4)
+   * 4 (parent 1, next NULL) << IMPORTANT!
+   *
+   * loop through them like:
+   * for (thistile = head; thistile = thistile->next; thistile->next != NULL)
+   */
+
+  if (headtile == NULL) {
+    // set this tile to the head
+    headtile = newtile;
+    newtile->parent = NULL;
+    newtile->next = NULL;
+
+  } else {
+    // add this tile to the end of the linked list
+    // so, go to latest tile
+
+    Tile *tile = headtile;
+    while (tile->next != NULL) {
+      tile = tile->next;
+    }
+    tile->next = newtile;
+    newtile->parent = tile; // this code WILL NEED TO change depending on the layout
+                            // better idea is to put the parent to the currently selected tile
+    newtile->next = NULL;
+  }
+
+  printf("linked list:\n");
+  for (Tile *tile = headtile; tile != NULL; tile = tile->next) {
+    printf("%lx\n", tile->win);
+  }
+
+  totalmapped++;
+  if (totalmapped==1) {
+    XMoveResizeWindow(dpy, mapreq->window,
+        0, 0, screenw/2, screenh);
+  } else {
+    XMoveResizeWindow(dpy, mapreq->window,
+        screenw/2, 0, screenw/2, screenh);
+  }
+
+  XMapWindow(dpy, mapreq->window);
+}
+
+void destroynotify(XEvent *ev) {
+  /* the wm doesn't have to do anything other than retile the remaining windows
+   * becuase this is a notify event not a request */
+  Window destroywin = ev->xdestroywindow.window;
+
+  // find this win in the linked list of tiles
+  Tile *prev = NULL;
+  Tile *tile = headtile;
+  while (tile != NULL && tile->win != destroywin) {
+    prev = tile;
+    tile = tile->next;
+  }
+
+  if (tile) {
+    printf("found win\n");
+    printf("tile: %x, win: %lx\n", tile, tile->win);
+    if (headtile == tile) {
+      headtile = tile->next;
+    }
+    if (prev) {
+      prev->next = tile->next;
+    }
+    free(tile);
+  }
+
+  printf("linked list:\n");
+  for (Tile *tile = headtile; tile != NULL; tile = tile->next) {
+    printf("%lx\n", tile->win);
+  }
+}
+
+void void_event(XEvent *ev) {
+  // do nothing
+}
+
+
+char KeysymToString(XKeyEvent *xkey) {
+  return *XKeysymToString(XLookupKeysym(xkey, 0));
+}
+
 void setup_atoms(void) {
   _NET_SUPPORTING_WM_CHECK = XInternAtom(dpy, "_NET_SUPPORTING_WM_CHECK", False);
   _NET_WM_NAME = XInternAtom(dpy, "_NET_WM_NAME", False);
@@ -54,18 +132,20 @@ void setup_atoms(void) {
       PropModeReplace, (unsigned char*) wmname, strlen(wmname));
 }
 
-void map_window(XMapRequestEvent *mapreq) {
-  totalmapped++;
-  if (totalmapped==1) {
-    XMoveResizeWindow(dpy, mapreq->window,
-        0, 0, screenw/2, screenh);
-  } else {
-    XMoveResizeWindow(dpy, mapreq->window,
-        screenw/2, 0, screenw/2, screenh);
-  }
+void setup(void) {
+  headtile = NULL;
 
-  XMapWindow(dpy, mapreq->window);
+  for (int i = 0; i < LASTEvent; i++) {
+    handler[i] = void_event;
+  }
+  handler[KeyPress] = keypress;
+  handler[MapRequest] = maprequest;
+  handler[DestroyNotify] = destroynotify;
 }
+
+void master_stack_tile(void) {
+}
+
 
 int main() {
   XEvent ev;
@@ -84,7 +164,7 @@ int main() {
   // type of events we'll be handling
   // use https://tronche.com/gui/x/xlib/events/processing-overview.html
   // if you don't want to killl yourself
-  XSelectInput(dpy, root, SubstructureRedirectMask);
+  XSelectInput(dpy, root, SubstructureRedirectMask | SubstructureNotifyMask);
 
   // asking ONLY for alt + a input events
   XGrabKey(dpy, XKeysymToKeycode(dpy, XStringToKeysym("q")), Mod1Mask,
@@ -93,25 +173,13 @@ int main() {
   printf("Default screen: %d\nScreen width: %d\nScreen height: %d\n", screen, screenw, screenh);
 
   setup_atoms();
+  setup();
 
-  while (true) {
+  for (;;) {
     XNextEvent(dpy, &ev);
-
-    printf("\n------------------\n");
     printf("event rec of type %d\n", ev.type);
 
-    switch (ev.type) {
-      case KeyPress:
-        printf("KeyPress:\n");
-        printf("key: %c\n", KeysymToString(&ev.xkey));
-        printf("mask: %d\n", ev.xkey.state);
-        key_press(&ev.xkey);
-        break;
-      case MapRequest:
-        printf("MapRequest\n");
-        map_window(&ev.xmaprequest);
-        break;
-    }
+    handler[ev.type](&ev);
   }
 
   XCloseDisplay(dpy);
