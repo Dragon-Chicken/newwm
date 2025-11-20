@@ -16,7 +16,6 @@ void keypress(XEvent *ev) {
 
 void maprequest(XEvent *ev) {
   XMapRequestEvent *mapreq = &ev->xmaprequest;
-  
   Tile *newtile = (Tile *)malloc(sizeof(Tile));
   newtile->win = mapreq->window;
 
