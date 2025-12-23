@@ -3,18 +3,36 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <unistd.h>
 
 #include "main.h"
 #include "defs.h"
 
+void voidevent(XEvent *ev) {
+  printf("(void event)\n");
+  // do nothing
+}
+
 void keypress(XEvent *ev) {
+  printf("(keypress)\n");
+
   XKeyEvent *xkey = &ev->xkey;
   if (KeysymToString(xkey) == 'q' && xkey->state == Mod1Mask) {
     exit(0);
   }
+  // spawn st
+  if (KeysymToString(xkey) == 'a' && xkey->state == Mod1Mask) {
+    spawn();
+  }
+  // focus idk
+  /*if (KeysymToString(xkey) == 'w' && xkey->state == Mod1Mask) {
+    setfocus(headtile);
+  }*/
 }
 
 void maprequest(XEvent *ev) {
+  printf("(maprequest)\n");
+
   XMapRequestEvent *mapreq = &ev->xmaprequest;
   Tile *newtile = (Tile *)malloc(sizeof(Tile));
   newtile->win = mapreq->window;
@@ -32,45 +50,44 @@ void maprequest(XEvent *ev) {
    * for (thistile = head; thistile = thistile->next; thistile->next != NULL)
    */
 
+  // should prob always init these two to NULL
+  newtile->parent = NULL;
+  newtile->next = NULL;
+
   if (headtile == NULL) {
-    // set this tile to the head
     headtile = newtile;
-    newtile->parent = NULL;
-    newtile->next = NULL;
   } else {
     // add this tile to the end of the linked list
     // so, go to latest tile
     Tile *tile = headtile;
-    while (tile->next != NULL) {
+    while (tile->next != NULL)
       tile = tile->next;
-    }
+
     tile->next = newtile;
     newtile->parent = tile; // this code WILL NEED TO change depending on the layout
                             // better idea is to put the parent to the currently selected tile
-    newtile->next = NULL;
   }
 
-  printf("linked list:\n");
+  /*printf("linked list:\n");
   for (Tile *tile = headtile; tile != NULL; tile = tile->next) {
     printf("%lx\n", tile->win);
-  }
+  }*/
 
-  totalmapped++;
-  if (totalmapped==1) {
-    XMoveResizeWindow(dpy, mapreq->window,
-        0, 0, screenw/2, screenh);
-  } else {
-    XMoveResizeWindow(dpy, mapreq->window,
-        screenw/2, 0, screenw/2, screenh);
-  }
+  master_stack_tile();
 
-  XMapWindow(dpy, mapreq->window);
+  focused = headtile;
 }
 
 void destroynotify(XEvent *ev) {
+  printf("(destroynotify)\n");
   /* the wm doesn't have to do anything other than retile the remaining windows
    * becuase this is a notify event not a request */
   Window destroywin = ev->xdestroywindow.window;
+
+  /*
+   * THIS DOES NOT HANDLE THE CASE WHERE A TILE WHO HAS CHILDREN GETS DELETED,
+   * THOSE CHILDREN STILL THINK THIS TILE EXISTS
+   */
 
   // find this win in the linked list of tiles
   Tile *prev = NULL;
@@ -80,8 +97,10 @@ void destroynotify(XEvent *ev) {
     tile = tile->next;
   }
 
+  Tile *deletetile = tile;
+
   if (tile) {
-    printf("found win\n");
+    printf("destroy: ");
     printf("tile: %x, win: %lx\n", tile, tile->win);
     if (headtile == tile) {
       headtile = tile->next;
@@ -89,38 +108,107 @@ void destroynotify(XEvent *ev) {
     if (prev) {
       prev->next = tile->next;
     }
-    free(tile);
+  } else {
+    printf("ERROR: cannot find tile/window\n");
   }
 
-  printf("linked list:\n");
+  while (tile != NULL) {
+    if (tile->parent == deletetile) {
+      if (deletetile->parent == NULL) {
+        deletetile->parent = tile;
+      }
+      tile->parent = deletetile->parent;
+    }
+    tile = tile->next;
+  }
+
+  if (deletetile == focused) {
+    focused = deletetile->parent;
+    XSetInputFocus(dpy, root, RevertToPointerRoot, CurrentTime);
+    printf("focused win: %lx\n", focused->win);
+  }
+
+  // freeing the tile
+  free(deletetile);
+
+  // tile
+  master_stack_tile();
+
+  /*printf("linked list:\n");
   for (Tile *tile = headtile; tile != NULL; tile = tile->next) {
     printf("%lx\n", tile->win);
+  }*/
+}
+
+void focusin(XEvent *ev) {
+  printf("(focusin)\n");
+
+  if (!focused)
+    return;
+
+  if (focused && ev->xfocus.window != focused->win) {
+    printf("focusing window: %lx\n", focused->win);
+    XSetInputFocus(dpy, focused->win, RevertToPointerRoot, CurrentTime);
   }
 }
 
-void void_event(XEvent *ev) {
-  // do nothing
-}
 
+void master_stack_tile(void) {
+  /* makes one master window
+   * to the right is a stack of newer windows*/
+  /* needs to check each tiles parent
+   * and each time half the parents width and put this tile to the right of the parent (for now)*/
+
+  for (Tile *tile = headtile; tile != NULL; tile = tile->next) {
+    // head case
+    if (tile == headtile) {
+      tile->x = 0; tile->y = 0;
+      tile->w = screenw; tile->h = screenh;
+      continue;
+    }
+
+    // don't tile parentless tiles
+    // or maybe make them float?
+    if (tile->parent == NULL) {
+      continue;
+    }
+
+    // make this tile half its parents size and to the right of it
+    tile->x = tile->parent->x + (tile->parent->w/2);
+    tile->w = tile->parent->w/2;
+    tile->y = tile->parent->y;
+    tile->h = tile->parent->h;
+
+    // make the parent half its size
+    tile->parent->w /= 2;
+  }
+
+  for (Tile *tile = headtile; tile != NULL; tile = tile->next) {
+    XMoveResizeWindow(dpy, tile->win,
+        tile->x, tile->y, tile->w, tile->h);
+    XMapWindow(dpy, tile->win);
+  }
+}
 
 char KeysymToString(XKeyEvent *xkey) {
   return *XKeysymToString(XLookupKeysym(xkey, 0));
 }
 
 void setup_atoms(void) {
+  UTF8_STRING = XInternAtom(dpy, "UTF8_STRING", False);
+
+  wmatom[WMProtocols] = XInternAtom(dpy, "WM_PROTOCOLS", False);
+  wmatom[WMDelete] = XInternAtom(dpy, "WM_DELETE_WINDOW", False);
+  wmatom[WMState] = XInternAtom(dpy, "WM_STATE", False);
+  wmatom[WMTakeFocus] = XInternAtom(dpy, "WM_TAKE_FOCUS", False);
+
   _NET_SUPPORTING_WM_CHECK = XInternAtom(dpy, "_NET_SUPPORTING_WM_CHECK", False);
   _NET_WM_NAME = XInternAtom(dpy, "_NET_WM_NAME", False);
   _NET_NUBER_OF_DESKTOPS = XInternAtom(dpy, "_NET_NUBER_OF_DESKTOPS", False);
 
-  UTF8_STRING = XInternAtom(dpy, "UTF8_STRING", False);
-
-  // EWMH needs a child window for hints
-  // wm name other props are in that child win
   Window WmCheckWin = XCreateSimpleWindow(dpy, root, 0, 0, 1, 1, 0, 0, 0);
-  // make new win the child of root
   XChangeProperty(dpy, root, _NET_SUPPORTING_WM_CHECK, XA_WINDOW, 32,
       PropModeReplace, (unsigned char*) &WmCheckWin, 1);
-  // make new win the child of itself
   XChangeProperty(dpy, WmCheckWin, _NET_SUPPORTING_WM_CHECK, XA_WINDOW, 32,
       PropModeReplace, (unsigned char*) &WmCheckWin, 1);
 
@@ -133,20 +221,69 @@ void setup(void) {
   headtile = NULL;
 
   for (int i = 0; i < LASTEvent; i++) {
-    handler[i] = void_event;
+    handler[i] = voidevent;
   }
   handler[KeyPress] = keypress;
   handler[MapRequest] = maprequest;
   handler[DestroyNotify] = destroynotify;
+  handler[FocusIn] = focusin;
 }
 
-void master_stack_tile(void) {
+// this code needs to be worked on
+// there is some posix stuff that dwm does that this code DOES NOT DO
+void spawn(void) {
+  if (fork() == 0) {
+    char *args[]={"st",NULL}; execvp(args[0],args);
+    exit(0); // kill child process
+  }
+}
+
+void sendevent(Tile *tile, Atom proto) {
+  int n;
+  Atom *protocols;
+  int exists = 0;
+  XEvent ev;
+
+  if (XGetWMProtocols(dpy, tile->win, &protocols, &n)) {
+    while (!exists && n--)
+      exists = protocols[n] == proto;
+    XFree(protocols);
+  }
+
+  if (exists) {
+    ev.type = ClientMessage;
+    ev.xclient.type = ClientMessage;
+    ev.xclient.window = tile->win;
+    ev.xclient.message_type = wmatom[WMProtocols];
+    ev.xclient.format = 32;
+    ev.xclient.data.l[0] = proto;
+    ev.xclient.data.l[1] = CurrentTime;
+    XSendEvent(dpy, tile->win, False, NoEventMask, &ev);
+  }
+}
+
+void setfocus(Tile *tile) {
+  if (tile->win == root || tile == NULL)
+    return;
+
+  sendevent(tile, wmatom[WMTakeFocus]);
+}
+
+int xerror(Display *dpy, XErrorEvent *ee) {
+  switch (ee->error_code) {
+    case BadWindow:
+      printf("Error BadWindow\n");
+      return 0;
+  }
+  // from dwm
+  fprintf(stderr, "tempname: fatal error: request code=%d, error code=%d\n",
+      ee->request_code, ee->error_code);
+  return xerrorxlib(dpy, ee);
 }
 
 
 int main() {
   XEvent ev;
-  totalmapped = 0;
 
   if (!(dpy = XOpenDisplay(NULL))) {
     printf("failed to open display");
@@ -161,20 +298,24 @@ int main() {
   // type of events we'll be handling
   // use https://tronche.com/gui/x/xlib/events/processing-overview.html
   // if you don't want to killl yourself
-  XSelectInput(dpy, root, SubstructureRedirectMask | SubstructureNotifyMask);
+  XSelectInput(dpy, root, SubstructureRedirectMask | SubstructureNotifyMask | FocusChangeMask | EnterWindowMask);
 
-  // asking ONLY for alt + a input events
   XGrabKey(dpy, XKeysymToKeycode(dpy, XStringToKeysym("q")), Mod1Mask,
+        root, True, GrabModeAsync, GrabModeAsync);
+  XGrabKey(dpy, XKeysymToKeycode(dpy, XStringToKeysym("a")), Mod1Mask,
+        root, True, GrabModeAsync, GrabModeAsync);
+  XGrabKey(dpy, XKeysymToKeycode(dpy, XStringToKeysym("w")), Mod1Mask,
         root, True, GrabModeAsync, GrabModeAsync);
 
   printf("Default screen: %d\nScreen width: %d\nScreen height: %d\n", screen, screenw, screenh);
 
   setup_atoms();
   setup();
+  xerrorxlib = XSetErrorHandler(xerror);
 
   for (;;) {
     XNextEvent(dpy, &ev);
-    printf("event rec of type %d\n", ev.type);
+    printf("event rec of type %d ", ev.type);
 
     handler[ev.type](&ev);
   }

@@ -5,4 +5,9 @@
 
 #define WM_NAME "TempWMName"
 
+// gaps
+// either gaps or top_, down_, left_, right_gaps
+
+#define gaps 20
+
 #endif
