@@ -10,7 +10,6 @@
 
 void voidevent(XEvent *ev) {
   printf("(void event)\n");
-  // do nothing
 }
 
 void keypress(XEvent *ev) {
@@ -24,10 +23,6 @@ void keypress(XEvent *ev) {
   if (KeysymToString(xkey) == 'a' && xkey->state == Mod1Mask) {
     spawn();
   }
-  // focus idk
-  /*if (KeysymToString(xkey) == 'w' && xkey->state == Mod1Mask) {
-    setfocus(headtile);
-  }*/
 }
 
 void maprequest(XEvent *ev) {
@@ -124,8 +119,8 @@ void destroynotify(XEvent *ev) {
 
   if (deletetile == focused) {
     focused = deletetile->parent;
-    XSetInputFocus(dpy, root, RevertToPointerRoot, CurrentTime);
-    printf("focused win: %lx\n", focused->win);
+    printf("focusing win: %lx\n", focused->win);
+    XSetInputFocus(dpy, focused->win, RevertToPointerRoot, CurrentTime);
   }
 
   // freeing the tile
@@ -147,7 +142,7 @@ void focusin(XEvent *ev) {
     return;
 
   if (focused && ev->xfocus.window != focused->win) {
-    printf("focusing window: %lx\n", focused->win);
+    printf("focusing win: %lx\n", focused->win);
     XSetInputFocus(dpy, focused->win, RevertToPointerRoot, CurrentTime);
   }
 }
@@ -303,8 +298,6 @@ int main() {
   XGrabKey(dpy, XKeysymToKeycode(dpy, XStringToKeysym("q")), Mod1Mask,
         root, True, GrabModeAsync, GrabModeAsync);
   XGrabKey(dpy, XKeysymToKeycode(dpy, XStringToKeysym("a")), Mod1Mask,
-        root, True, GrabModeAsync, GrabModeAsync);
-  XGrabKey(dpy, XKeysymToKeycode(dpy, XStringToKeysym("w")), Mod1Mask,
         root, True, GrabModeAsync, GrabModeAsync);
 
   printf("Default screen: %d\nScreen width: %d\nScreen height: %d\n", screen, screenw, screenh);
