@@ -206,10 +206,8 @@ void setup_atoms(void) {
       PropModeReplace, (unsigned char*) &WmCheckWin, 1);
   XChangeProperty(dpy, WmCheckWin, _NET_SUPPORTING_WM_CHECK, XA_WINDOW, 32,
       PropModeReplace, (unsigned char*) &WmCheckWin, 1);
-
-  char *wmname = WM_NAME;
   XChangeProperty(dpy, WmCheckWin, _NET_WM_NAME, UTF8_STRING, 8,
-      PropModeReplace, (unsigned char*) wmname, strlen(wmname));
+      PropModeReplace, (unsigned char*) WM_NAME, strlen(WM_NAME));
 }
 
 void setup(void) {
@@ -271,8 +269,8 @@ int xerror(Display *dpy, XErrorEvent *ee) {
       return 0;
   }
   // from dwm
-  fprintf(stderr, "tempname: fatal error: request code=%d, error code=%d\n",
-      ee->request_code, ee->error_code);
+  fprintf(stderr, "%s: fatal error: request code=%d, error code=%d\n",
+      WM_NAME, ee->request_code, ee->error_code);
   return xerrorxlib(dpy, ee);
 }
 

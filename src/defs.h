@@ -3,7 +3,7 @@
 
 // user config stuff goes here
 
-#define WM_NAME "TempWMName"
+#define WM_NAME "nwm"
 
 // gaps
 // either gaps or top_, down_, left_, right_gaps
