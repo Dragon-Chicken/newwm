@@ -27,10 +27,11 @@ void keypress(XEvent *ev) {
 
 void maprequest(XEvent *ev) {
   printf("(maprequest)\n");
-
   XMapRequestEvent *mapreq = &ev->xmaprequest;
   Tile *newtile = (Tile *)malloc(sizeof(Tile));
   newtile->win = mapreq->window;
+  newtile->parent = NULL;
+  newtile->next = NULL;
 
   /* structure:
    * each index is a tile
@@ -45,101 +46,84 @@ void maprequest(XEvent *ev) {
    * for (thistile = head; thistile = thistile->next; thistile->next != NULL)
    */
 
-  // should prob always init these two to NULL
-  newtile->parent = NULL;
-  newtile->next = NULL;
-
-  if (headtile == NULL) {
+  if (!headtile) {
     headtile = newtile;
   } else {
-    // add this tile to the end of the linked list
-    // so, go to latest tile
     Tile *tile = headtile;
-    while (tile->next != NULL)
+    while (tile->next)
       tile = tile->next;
 
     tile->next = newtile;
     newtile->parent = tile; // this code WILL NEED TO change depending on the layout
                             // better idea is to put the parent to the currently selected tile
   }
-
-  /*printf("linked list:\n");
-  for (Tile *tile = headtile; tile != NULL; tile = tile->next) {
-    printf("%lx\n", tile->win);
-  }*/
-
   master_stack_tile();
-
-  focused = headtile;
+  focused = headtile; // temp
 }
 
 void destroynotify(XEvent *ev) {
   printf("(destroynotify)\n");
-  /* the wm doesn't have to do anything other than retile the remaining windows
-   * becuase this is a notify event not a request */
   Window destroywin = ev->xdestroywindow.window;
 
   /*
    * THIS DOES NOT HANDLE THE CASE WHERE A TILE WHO HAS CHILDREN GETS DELETED,
    * THOSE CHILDREN STILL THINK THIS TILE EXISTS
+   * god knows if this ^ is fixed or not
    */
 
-  // find this win in the linked list of tiles
   Tile *prev = NULL;
   Tile *tile = headtile;
-  while (tile != NULL && tile->win != destroywin) {
+  while (tile && tile->win != destroywin) {
     prev = tile;
     tile = tile->next;
   }
 
+  // try to somehow remove this and just use tile
   Tile *deletetile = tile;
 
-  if (tile) {
-    printf("destroy: ");
-    printf("tile: %x, win: %lx\n", tile, tile->win);
-    if (headtile == tile) {
-      headtile = tile->next;
-    }
-    if (prev) {
-      prev->next = tile->next;
-    }
-  } else {
+  if (!deletetile) {
     printf("ERROR: cannot find tile/window\n");
+    return;
   }
 
-  while (tile != NULL) {
+  printf("destroy tile: %x, win: %lx\n", deletetile, deletetile->win);
+  if (deletetile == headtile)
+    headtile = deletetile->next;
+  if (prev)
+    prev->next = deletetile->next;
+
+  while (tile) {
     if (tile->parent == deletetile) {
-      if (deletetile->parent == NULL) {
-        deletetile->parent = tile;
-      }
       tile->parent = deletetile->parent;
+      if (deletetile->parent == NULL)
+        deletetile->parent = tile;
     }
     tile = tile->next;
   }
 
-  if (deletetile == focused) {
+  if (deletetile == focused && deletetile->parent) {
     focused = deletetile->parent;
     printf("focusing win: %lx\n", focused->win);
     XSetInputFocus(dpy, focused->win, RevertToPointerRoot, CurrentTime);
   }
 
-  // freeing the tile
   free(deletetile);
-
-  // tile
   master_stack_tile();
 
+  // should prob put this in it's own function for debugging
   /*printf("linked list:\n");
-  for (Tile *tile = headtile; tile != NULL; tile = tile->next) {
+  tile = headtile;
+  while (tile) {
     printf("%lx\n", tile->win);
+    tile = tile->next;
   }*/
 }
 
 void focusin(XEvent *ev) {
   printf("(focusin)\n");
-
-  if (!focused)
+  if (!focused) {
     return;
+  }
 
   if (focused && ev->xfocus.window != focused->win) {
     printf("focusing win: %lx\n", focused->win);
@@ -148,34 +132,25 @@ void focusin(XEvent *ev) {
 }
 
 
+// "dwm tiling"
 void master_stack_tile(void) {
-  /* makes one master window
-   * to the right is a stack of newer windows*/
-  /* needs to check each tiles parent
-   * and each time half the parents width and put this tile to the right of the parent (for now)*/
-
   for (Tile *tile = headtile; tile != NULL; tile = tile->next) {
-    // head case
     if (tile == headtile) {
-      tile->x = 0; tile->y = 0;
-      tile->w = screenw; tile->h = screenh;
+      tile->x = 0 + GAPS; tile->y = 0 + GAPS;
+      tile->w = screenw - (2*GAPS); tile->h = screenh - (2*GAPS);
       continue;
     }
-
-    // don't tile parentless tiles
-    // or maybe make them float?
     if (tile->parent == NULL) {
       continue;
     }
 
-    // make this tile half its parents size and to the right of it
-    tile->x = tile->parent->x + (tile->parent->w/2);
-    tile->w = tile->parent->w/2;
+    tile->x = tile->parent->x + (tile->parent->w/2) + GAPS/2;
+    tile->w = tile->parent->w/2 - GAPS/2;
     tile->y = tile->parent->y;
     tile->h = tile->parent->h;
 
-    // make the parent half its size
     tile->parent->w /= 2;
+    tile->parent->w -= GAPS/2;
   }
 
   for (Tile *tile = headtile; tile != NULL; tile = tile->next) {
@@ -265,7 +240,7 @@ void setfocus(Tile *tile) {
 int xerror(Display *dpy, XErrorEvent *ee) {
   switch (ee->error_code) {
     case BadWindow:
-      printf("Error BadWindow\n");
+      printf("ERROR: BadWindow\n");
       return 0;
   }
   // from dwm

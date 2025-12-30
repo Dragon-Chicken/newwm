@@ -8,6 +8,6 @@
 // gaps
 // either gaps or top_, down_, left_, right_gaps
 
-#define gaps 20
+#define GAPS 40
 
 #endif

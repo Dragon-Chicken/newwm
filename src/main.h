@@ -29,20 +29,18 @@ int (*xerrorxlib)(Display *, XErrorEvent *);
 int xerror(Display *dpy, XErrorEvent *ee);
 void setup_atoms(void);
 void setup(void);
-Tile *findtile(Window *win);
-//void tile(void);
 void master_stack_tile(void);
 void spawn(void);
 void setfocus(Tile *tile);
 void sendevent(Tile *tile, Atom proto);
 
 void (*handler[LASTEvent])(XEvent*);
+void voidevent(XEvent *ev);
 void keypress(XEvent *ev);
 void maprequest(XEvent *ev);
 void destroynotify(XEvent *ev);
 void focusin(XEvent *ev);
 void enternotify(XEvent *ev);
-void voidevent(XEvent *ev);
 
 Tile *headtile;
 Tile *focused;
