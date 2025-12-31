@@ -40,13 +40,13 @@ void keypress(XEvent *ev) {
 void maprequest(XEvent *ev) {
   printf("(maprequest)\n");
   XMapRequestEvent *mapreq = &ev->xmaprequest;
-  Tile *newtile = (Tile *)malloc(sizeof(Tile));
-  newtile->win = mapreq->window;
-  newtile->parent = NULL;
-  newtile->next = NULL;
+  Client *newc = (Client *)malloc(sizeof(Client));
+  newc->win = mapreq->window;
+  newc->parent = NULL;
+  newc->next = NULL;
 
-  XSelectInput(dpy, newtile->win, EnterWindowMask | FocusChangeMask);
-  XSetWindowBorderWidth(dpy, newtile->win, 4);
+  XSelectInput(dpy, newc->win, EnterWindowMask | FocusChangeMask);
+  XSetWindowBorderWidth(dpy, newc->win, 4);
 
   /* structure:
    * each index is a tile
@@ -61,15 +61,15 @@ void maprequest(XEvent *ev) {
    * for (thistile = head; thistile = thistile->next; thistile->next != NULL)
    */
 
-  if (!headtile) {
-    headtile = newtile;
+  if (!headc) {
+    headc = newc;
   } else {
-    Tile *tile = headtile;
-    while (tile->next)
-      tile = tile->next;
+    Client *c = headc;
+    while (c->next)
+      c = c->next;
 
-    tile->next = newtile;
-    newtile->parent = tile; // this code WILL NEED TO change depending on the layout
+    c->next = newc;
+    newc->parent = c; // this code WILL NEED TO change depending on the layout
                             // better idea is to put the parent to the currently selected tile
   }
   masterstacktile();
@@ -92,10 +92,10 @@ void destroynotify(XEvent *ev) {
 
   // should prob put this in it's own function for debugging
   /*printf("linked list:\n");
-  tile = headtile;
-  while (tile) {
-    printf("%lx\n", tile->win);
-    tile = tile->next;
+  c = headc;
+  while (c) {
+    printf("%lx\n", c->win);
+    c = c->next;
   }*/
 }
 
@@ -106,43 +106,43 @@ void unmanage(Window deletewin) {
    * god knows if this ^ is fixed or not
    */
 
-  Tile *prev = NULL;
-  Tile *tile = headtile;
-  while (tile && tile->win != deletewin) {
-    prev = tile;
-    tile = tile->next;
+  Client *prevc = NULL;
+  Client *c = headc;
+  while (c && c->win != deletewin) {
+    prevc = c;
+    c = c->next;
   }
 
   // try to somehow remove this and just use tile
-  Tile *deletetile = tile;
+  Client *delc = c;
 
-  if (!deletetile) {
-    printf("ERROR: cannot find tile/window\n");
+  if (!delc) {
+    printf("ERROR: cannot find client/window\n");
     return;
   }
 
-  printf("destroy tile: %x, win: %lx\n", deletetile, deletetile->win);
-  if (deletetile == headtile)
-    headtile = deletetile->next;
-  if (prev)
-    prev->next = deletetile->next;
+  printf("destroy client: %x, win: %lx\n", delc, delc->win);
+  if (delc == headc)
+    headc = delc->next;
+  if (prevc)
+    prevc->next = delc->next;
 
-  while (tile) {
-    if (tile->parent == deletetile) {
-      tile->parent = deletetile->parent;
-      if (deletetile->parent == NULL)
-        deletetile->parent = tile;
+  while (c) {
+    if (c->parent == delc) {
+      c->parent = delc->parent;
+      if (delc->parent == NULL)
+        delc->parent = c;
     }
-    tile = tile->next;
+    c = c->next;
   }
 
-  if (deletetile == focused && deletetile->parent) {
-    focused = deletetile->parent;
+  if (delc == focused && delc->parent) {
+    focused = delc->parent;
     printf("focusing win: %lx\n", focused->win);
     XSetInputFocus(dpy, focused->win, RevertToPointerRoot, CurrentTime);
   }
 
-  free(deletetile);
+  free(delc);
 }
 
 void enternotify(XEvent *ev) {
@@ -150,13 +150,13 @@ void enternotify(XEvent *ev) {
   if (ev->xcrossing.window == root)
     return;
 
-  Tile *tile = headtile;
-  while (tile->next && tile->win != ev->xcrossing.window) {
-    tile = tile->next;
+  Client *c = headc;
+  while (c->next && c->win != ev->xcrossing.window) {
+    c = c->next;
   }
-  printf("win: %lx\n", tile->win);
-  focused = tile;
-  setfocus(tile);
+  printf("win: %lx\n", c->win);
+  focused = c;
+  setfocus(c);
 }
 
 void focusin(XEvent *ev) {
@@ -166,58 +166,58 @@ void focusin(XEvent *ev) {
   }
 }
 
-void setfocus(Tile *tile) {
-  if (tile->win == root || tile == NULL)
+void setfocus(Client *c) {
+  if (c->win == root || c == NULL)
     return;
-  focused = tile; // make sure focus is set
+  focused = c; // make sure focus is set
   //sendevent(tile, wmatom[WMTakeFocus]); // god know what this does
-  printf("focusing win: %lx\n", tile->win);
-  XSetInputFocus(dpy, tile->win, RevertToPointerRoot, CurrentTime);
+  printf("focusing win: %lx\n", c->win);
+  XSetInputFocus(dpy, c->win, RevertToPointerRoot, CurrentTime);
   XChangeProperty(dpy, root, netatom[NetActiveWindow],
       XA_WINDOW, 32, PropModeReplace,
-      (unsigned char *) &(tile->win), 1);
+      (unsigned char *) &(c->win), 1);
   
   updateborders();
 }
 
 
 void updateborders() {
-  for (Tile *tile = headtile; tile; tile = tile->next) {
-    XSetWindowBorder(dpy, tile->win, (tile == focused ? 0xffff0000L : 0xff0000ffL));
+  for (Client *c = headc; c; c = c->next) {
+    XSetWindowBorder(dpy, c->win, (c == focused ? 0xffff0000L : 0xff0000ffL));
   }
 }
 
 // "dwm tiling"
 void masterstacktile(void) {
-  for (Tile *tile = headtile; tile; tile = tile->next) {
+  for (Client *c = headc; c; c = c->next) {
     int vgaps = GAPS;
     int hgaps = GAPS;
-    if (tile == headtile) {
-      tile->x = 0 + hgaps; tile->y = 0 + vgaps;
-      tile->w = screenw - (2*hgaps); tile->h = screenh - (2*vgaps);
+    if (c == headc) {
+      c->x = 0 + hgaps; c->y = 0 + vgaps;
+      c->w = screenw - (2*hgaps); c->h = screenh - (2*vgaps);
       continue;
     }
-    if (tile->parent == NULL) {
+    if (c->parent == NULL) {
       continue;
     }
-    tile->x = tile->parent->x + (tile->parent->w/2) + hgaps/2;
-    tile->w = tile->parent->w/2 - hgaps/2;
-    tile->y = tile->parent->y;
-    tile->h = tile->parent->h;
-    tile->parent->w = tile->parent->w/2 - hgaps/2;
+    c->x = c->parent->x + (c->parent->w/2) + hgaps/2;
+    c->w = c->parent->w/2 - hgaps/2;
+    c->y = c->parent->y;
+    c->h = c->parent->h;
+    c->parent->w = c->parent->w/2 - hgaps/2;
   }
 
-  for (Tile *tile = headtile; tile; tile = tile->next) {
-    XMoveResizeWindow(dpy, tile->win,
-        tile->x, tile->y, tile->w, tile->h);
-    XMapWindow(dpy, tile->win);
+  for (Client *c = headc; c; c = c->next) {
+    XMoveResizeWindow(dpy, c->win,
+        c->x, c->y, c->w, c->h);
+    XMapWindow(dpy, c->win);
   }
 
   updateborders();
 }
 
 void setup(void) {
-  headtile = NULL;
+  headc = NULL;
   for (int i = 0; i < LASTEvent; i++)
     handler[i] = voidevent;
   handler[KeyPress] = keypress;
@@ -264,13 +264,13 @@ void spawn(char *argv[]) {
   }
 }
 
-void sendevent(Tile *tile, Atom proto) {
+void sendevent(Client *c, Atom proto) {
   int n;
   Atom *protocols;
   int exists = 0;
   XEvent ev;
 
-  if (XGetWMProtocols(dpy, tile->win, &protocols, &n)) {
+  if (XGetWMProtocols(dpy, c->win, &protocols, &n)) {
     while (!exists && n--)
       exists = protocols[n] == proto;
     XFree(protocols);
@@ -279,12 +279,12 @@ void sendevent(Tile *tile, Atom proto) {
   if (exists) {
     ev.type = ClientMessage;
     ev.xclient.type = ClientMessage;
-    ev.xclient.window = tile->win;
+    ev.xclient.window = c->win;
     ev.xclient.message_type = wmatom[WMProtocols];
     ev.xclient.format = 32;
     ev.xclient.data.l[0] = proto;
     ev.xclient.data.l[1] = CurrentTime;
-    XSendEvent(dpy, tile->win, False, NoEventMask, &ev);
+    XSendEvent(dpy, c->win, False, NoEventMask, &ev);
   }
 }
 

@@ -11,11 +11,11 @@ Display *dpy;
 Window root;
 int screenw, screenh;
 
-typedef struct Tile Tile;
-struct Tile {
+typedef struct Client Client;
+struct Client {
   Window win;
-  Tile *parent;
-  Tile *next;
+  Client *parent;
+  Client *next;
   int x, y, w, h;
 };
 
@@ -28,8 +28,8 @@ void setup(void);
 void masterstacktile(void);
 void updateborders(void);
 void spawn(char *argv[]);
-void setfocus(Tile *tile);
-void sendevent(Tile *tile, Atom proto);
+void setfocus(Client *c);
+void sendevent(Client *c, Atom proto);
 void unmanage(Window destroywin);
 
 void (*handler[LASTEvent])(XEvent*);
@@ -41,7 +41,7 @@ void unmapnotify(XEvent *ev);
 void focusin(XEvent *ev);
 void enternotify(XEvent *ev);
 
-Tile *headtile;
-Tile *focused;
+Client *headc;
+Client *focused;
 
 #endif
