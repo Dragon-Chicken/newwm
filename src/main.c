@@ -8,20 +8,32 @@
 #include "main.h"
 #include "defs.h"
 
+void exitwm(int err) {
+  XCloseDisplay(dpy);
+  exit(err);
+}
+
 void voidevent(XEvent *ev) {
   printf("(void event)\n");
+}
+
+char keysymtostring(XKeyEvent *xkey) {
+  return *XKeysymToString(XLookupKeysym(xkey, 0));
 }
 
 void keypress(XEvent *ev) {
   printf("(keypress)\n");
 
   XKeyEvent *xkey = &ev->xkey;
-  if (KeysymToString(xkey) == 'q' && xkey->state == Mod1Mask) {
-    exit(0);
+  if (keysymtostring(xkey) == 'q' && xkey->state == Mod1Mask) {
+    fprintf(stderr, "exiting with no errors\n");
+    exitwm(0);
   }
-  // spawn st
-  if (KeysymToString(xkey) == 'a' && xkey->state == Mod1Mask) {
-    spawn();
+  if (keysymtostring(xkey) == 'a' && xkey->state == Mod1Mask) {
+    spawn((char *[]){"st", NULL}); // what have I created....
+  }
+  if (keysymtostring(xkey) == 's' && xkey->state == Mod1Mask) {
+    spawn((char *[]){"rofi", "-normal-window", "-show", "drun", NULL}); // what have I created....
   }
 }
 
@@ -32,6 +44,9 @@ void maprequest(XEvent *ev) {
   newtile->win = mapreq->window;
   newtile->parent = NULL;
   newtile->next = NULL;
+
+  XSelectInput(dpy, newtile->win, EnterWindowMask | FocusChangeMask);
+  XSetWindowBorderWidth(dpy, newtile->win, 4);
 
   /* structure:
    * each index is a tile
@@ -57,14 +72,34 @@ void maprequest(XEvent *ev) {
     newtile->parent = tile; // this code WILL NEED TO change depending on the layout
                             // better idea is to put the parent to the currently selected tile
   }
-  master_stack_tile();
-  focused = headtile; // temp
+  masterstacktile();
+}
+
+void unmapnotify(XEvent *ev) {
+  printf("(unmapnotify)\n");
+  Window unmapwin = ev->xunmap.window;
+
+  unmanage(unmapwin);
+  masterstacktile();
 }
 
 void destroynotify(XEvent *ev) {
   printf("(destroynotify)\n");
   Window destroywin = ev->xdestroywindow.window;
 
+  unmanage(destroywin);
+  masterstacktile();
+
+  // should prob put this in it's own function for debugging
+  /*printf("linked list:\n");
+  tile = headtile;
+  while (tile) {
+    printf("%lx\n", tile->win);
+    tile = tile->next;
+  }*/
+}
+
+void unmanage(Window deletewin) {
   /*
    * THIS DOES NOT HANDLE THE CASE WHERE A TILE WHO HAS CHILDREN GETS DELETED,
    * THOSE CHILDREN STILL THINK THIS TILE EXISTS
@@ -73,7 +108,7 @@ void destroynotify(XEvent *ev) {
 
   Tile *prev = NULL;
   Tile *tile = headtile;
-  while (tile && tile->win != destroywin) {
+  while (tile && tile->win != deletewin) {
     prev = tile;
     tile = tile->next;
   }
@@ -108,100 +143,123 @@ void destroynotify(XEvent *ev) {
   }
 
   free(deletetile);
-  master_stack_tile();
+}
 
-  // should prob put this in it's own function for debugging
-  /*printf("linked list:\n");
-  tile = headtile;
-  while (tile) {
-    printf("%lx\n", tile->win);
+void enternotify(XEvent *ev) {
+  printf("(enternotify)\n");
+  if (ev->xcrossing.window == root)
+    return;
+
+  Tile *tile = headtile;
+  while (tile->next && tile->win != ev->xcrossing.window) {
     tile = tile->next;
-  }*/
+  }
+  printf("win: %lx\n", tile->win);
+  focused = tile;
+  setfocus(tile);
 }
 
 void focusin(XEvent *ev) {
   printf("(focusin)\n");
-  if (!focused) {
-    return;
-  }
-
   if (focused && ev->xfocus.window != focused->win) {
-    printf("focusing win: %lx\n", focused->win);
-    XSetInputFocus(dpy, focused->win, RevertToPointerRoot, CurrentTime);
+    setfocus(focused);
   }
 }
 
+void setfocus(Tile *tile) {
+  if (tile->win == root || tile == NULL)
+    return;
+  focused = tile; // make sure focus is set
+  //sendevent(tile, wmatom[WMTakeFocus]); // god know what this does
+  printf("focusing win: %lx\n", tile->win);
+  XSetInputFocus(dpy, tile->win, RevertToPointerRoot, CurrentTime);
+  XChangeProperty(dpy, root, netatom[NetActiveWindow],
+      XA_WINDOW, 32, PropModeReplace,
+      (unsigned char *) &(tile->win), 1);
+  
+  updateborders();
+}
+
+
+void updateborders() {
+  for (Tile *tile = headtile; tile; tile = tile->next) {
+    XSetWindowBorder(dpy, tile->win, (tile == focused ? 0xffff0000L : 0xff0000ffL));
+  }
+}
 
 // "dwm tiling"
-void master_stack_tile(void) {
-  for (Tile *tile = headtile; tile != NULL; tile = tile->next) {
+void masterstacktile(void) {
+  for (Tile *tile = headtile; tile; tile = tile->next) {
+    int vgaps = GAPS;
+    int hgaps = GAPS;
     if (tile == headtile) {
-      tile->x = 0 + GAPS; tile->y = 0 + GAPS;
-      tile->w = screenw - (2*GAPS); tile->h = screenh - (2*GAPS);
+      tile->x = 0 + hgaps; tile->y = 0 + vgaps;
+      tile->w = screenw - (2*hgaps); tile->h = screenh - (2*vgaps);
       continue;
     }
     if (tile->parent == NULL) {
       continue;
     }
-
-    tile->x = tile->parent->x + (tile->parent->w/2) + GAPS/2;
-    tile->w = tile->parent->w/2 - GAPS/2;
+    tile->x = tile->parent->x + (tile->parent->w/2) + hgaps/2;
+    tile->w = tile->parent->w/2 - hgaps/2;
     tile->y = tile->parent->y;
     tile->h = tile->parent->h;
-
-    tile->parent->w /= 2;
-    tile->parent->w -= GAPS/2;
+    tile->parent->w = tile->parent->w/2 - hgaps/2;
   }
 
-  for (Tile *tile = headtile; tile != NULL; tile = tile->next) {
+  for (Tile *tile = headtile; tile; tile = tile->next) {
     XMoveResizeWindow(dpy, tile->win,
         tile->x, tile->y, tile->w, tile->h);
     XMapWindow(dpy, tile->win);
   }
+
+  updateborders();
 }
 
-char KeysymToString(XKeyEvent *xkey) {
-  return *XKeysymToString(XLookupKeysym(xkey, 0));
+void setup(void) {
+  headtile = NULL;
+  for (int i = 0; i < LASTEvent; i++)
+    handler[i] = voidevent;
+  handler[KeyPress] = keypress;
+  handler[MapRequest] = maprequest;
+  handler[DestroyNotify] = destroynotify;
+  handler[UnmapNotify] = unmapnotify;
+  handler[EnterNotify] = enternotify;
+  handler[FocusIn] = focusin;
+  
+  spawn((char *[]){"feh", "--bg-fill", "/home/ethan/dotfiles/images/wallpaper.png", NULL});
 }
 
-void setup_atoms(void) {
-  UTF8_STRING = XInternAtom(dpy, "UTF8_STRING", False);
+void setupatoms(void) {
+  Atom utf8string;
+  utf8string = XInternAtom(dpy, "UTF8_STRING", False);
 
   wmatom[WMProtocols] = XInternAtom(dpy, "WM_PROTOCOLS", False);
   wmatom[WMDelete] = XInternAtom(dpy, "WM_DELETE_WINDOW", False);
   wmatom[WMState] = XInternAtom(dpy, "WM_STATE", False);
   wmatom[WMTakeFocus] = XInternAtom(dpy, "WM_TAKE_FOCUS", False);
 
-  _NET_SUPPORTING_WM_CHECK = XInternAtom(dpy, "_NET_SUPPORTING_WM_CHECK", False);
-  _NET_WM_NAME = XInternAtom(dpy, "_NET_WM_NAME", False);
-  _NET_NUBER_OF_DESKTOPS = XInternAtom(dpy, "_NET_NUBER_OF_DESKTOPS", False);
+  netatom[NetActiveWindow] = XInternAtom(dpy, "_NET_ACTIVE_WINDOW", False);
+  netatom[NetWMCheck] = XInternAtom(dpy, "_NET_SUPPORTING_WM_CHECK", False);
+  netatom[NetWMName] = XInternAtom(dpy, "_NET_WM_NAME", False);
 
   Window WmCheckWin = XCreateSimpleWindow(dpy, root, 0, 0, 1, 1, 0, 0, 0);
-  XChangeProperty(dpy, root, _NET_SUPPORTING_WM_CHECK, XA_WINDOW, 32,
+  XChangeProperty(dpy, root, netatom[NetWMCheck], XA_WINDOW, 32,
       PropModeReplace, (unsigned char*) &WmCheckWin, 1);
-  XChangeProperty(dpy, WmCheckWin, _NET_SUPPORTING_WM_CHECK, XA_WINDOW, 32,
+  XChangeProperty(dpy, WmCheckWin, netatom[NetWMCheck], XA_WINDOW, 32,
       PropModeReplace, (unsigned char*) &WmCheckWin, 1);
-  XChangeProperty(dpy, WmCheckWin, _NET_WM_NAME, UTF8_STRING, 8,
+  XChangeProperty(dpy, WmCheckWin, netatom[NetWMName], utf8string, 8,
       PropModeReplace, (unsigned char*) WM_NAME, strlen(WM_NAME));
-}
-
-void setup(void) {
-  headtile = NULL;
-
-  for (int i = 0; i < LASTEvent; i++) {
-    handler[i] = voidevent;
-  }
-  handler[KeyPress] = keypress;
-  handler[MapRequest] = maprequest;
-  handler[DestroyNotify] = destroynotify;
-  handler[FocusIn] = focusin;
 }
 
 // this code needs to be worked on
 // there is some posix stuff that dwm does that this code DOES NOT DO
-void spawn(void) {
+void spawn(char *argv[]) {
+  printf("\n%s\n", argv[0]);
   if (fork() == 0) {
-    char *args[]={"st",NULL}; execvp(args[0],args);
+    //char *args[]={program,NULL};
+    setsid();
+    execvp(argv[0], argv);
     exit(0); // kill child process
   }
 }
@@ -230,20 +288,13 @@ void sendevent(Tile *tile, Atom proto) {
   }
 }
 
-void setfocus(Tile *tile) {
-  if (tile->win == root || tile == NULL)
-    return;
-
-  sendevent(tile, wmatom[WMTakeFocus]);
-}
-
 int xerror(Display *dpy, XErrorEvent *ee) {
+  // from dwm
   switch (ee->error_code) {
     case BadWindow:
       printf("ERROR: BadWindow\n");
       return 0;
   }
-  // from dwm
   fprintf(stderr, "%s: fatal error: request code=%d, error code=%d\n",
       WM_NAME, ee->request_code, ee->error_code);
   return xerrorxlib(dpy, ee);
@@ -254,8 +305,8 @@ int main() {
   XEvent ev;
 
   if (!(dpy = XOpenDisplay(NULL))) {
-    printf("failed to open display");
-    exit(1);
+    fprintf(stderr, "failed to open display\n");
+    exitwm(1);
   }
 
   int screen = DefaultScreen(dpy);
@@ -272,10 +323,12 @@ int main() {
         root, True, GrabModeAsync, GrabModeAsync);
   XGrabKey(dpy, XKeysymToKeycode(dpy, XStringToKeysym("a")), Mod1Mask,
         root, True, GrabModeAsync, GrabModeAsync);
+  XGrabKey(dpy, XKeysymToKeycode(dpy, XStringToKeysym("s")), Mod1Mask,
+        root, True, GrabModeAsync, GrabModeAsync);
 
   printf("Default screen: %d\nScreen width: %d\nScreen height: %d\n", screen, screenw, screenh);
 
-  setup_atoms();
+  setupatoms();
   setup();
   xerrorxlib = XSetErrorHandler(xerror);
 
@@ -286,8 +339,7 @@ int main() {
     handler[ev.type](&ev);
   }
 
-  XCloseDisplay(dpy);
-  printf("exiting with no errors\n");
-
+  fprintf(stderr, "exiting with no errors\n");
+  exitwm(0);
   return 0;
 }

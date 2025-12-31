@@ -6,7 +6,7 @@
 #define WM_NAME "nwm"
 
 // gaps
-// either gaps or top_, down_, left_, right_gaps
+// either gaps or v_gaps and h_gaps
 
 #define GAPS 40
 
