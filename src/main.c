@@ -8,6 +8,25 @@
 #include "main.h"
 #include "defs.h"
 
+
+void printll(void) {
+  printf("\nlinked list:\n");
+  Client *c = headc;
+  while (c) {
+    printf("c: %-8lx, n: %-8lx, pr: %-8lx, pa: %-8lx, h: %d\n",
+        c->win,
+        (c->next != NULL ? c->next->win : 0L),
+        (c->prev != NULL ? c->prev->win : 0L),
+        (c->parent != NULL ? c->parent->win : 0L),
+        (c == headc ? 1 : 0));
+    c = c->next;
+  }
+}
+
+void printerr(char *errstr) {
+  fprintf(stderr, "%s: error: %s", WM_NAME, errstr);
+}
+
 void exitwm(int err) {
   XCloseDisplay(dpy);
   exit(err);
@@ -26,11 +45,11 @@ void keypress(XEvent *ev) {
 
   XKeyEvent *xkey = &ev->xkey;
   if (keysymtostring(xkey) == 'q' && xkey->state == Mod1Mask) {
-    fprintf(stderr, "exiting with no errors\n");
+    fprintf(stderr, "%s: exiting with no errors\n", WM_NAME);
     exitwm(0);
   }
   if (keysymtostring(xkey) == 'a' && xkey->state == Mod1Mask) {
-    spawn((char *[]){"st", NULL}); // what have I created....
+    spawn((char *[]){"st", NULL});
   }
   if (keysymtostring(xkey) == 's' && xkey->state == Mod1Mask) {
     spawn((char *[]){"rofi", "-normal-window", "-show", "drun", NULL});
@@ -48,19 +67,6 @@ void maprequest(XEvent *ev) {
 
   XSelectInput(dpy, newc->win, EnterWindowMask | FocusChangeMask);
   XSetWindowBorderWidth(dpy, newc->win, conf.bord_size);
-
-  /* structure:
-   * each index is a tile
-   * each tile has both a parent and the next tile
-   *
-   * head/1 (parent NULL, next 2)
-   * 2 (parent 1, next 3)
-   * 3 (parent 2, next 4)
-   * 4 (parent 1, next NULL) << IMPORTANT!
-   *
-   * loop through them like:
-   * for (thistile = head; thistile = thistile->next; thistile->next != NULL)
-   */
 
   if (!headc) {
     headc = newc;
@@ -90,28 +96,6 @@ void destroynotify(XEvent *ev) {
 
   unmanage(destroywin);
   masterstacktile();
-
-  // should prob put this in it's own function for debugging
-  /*printf("linked list:\n");
-  c = headc;
-  while (c) {
-    printf("%lx\n", c->win);
-    c = c->next;
-  }*/
-}
-
-void printll(void) {
-  printf("\nlinked list:\n");
-  Client *c = headc;
-  while (c) {
-    printf("c: %-8lx, n: %-8lx, pr: %-8lx, pa: %-8lx, h: %d\n",
-        c->win,
-        (c->next != NULL ? c->next->win : 0L),
-        (c->prev != NULL ? c->prev->win : 0L),
-        (c->parent != NULL ? c->parent->win : 0L),
-        (c == headc ? 1 : 0));
-    c = c->next;
-  }
 }
 
 void unmanage(Window deletewin) {
@@ -124,16 +108,16 @@ void unmanage(Window deletewin) {
   Client *delc = c;
 
   if (!delc) {
-    printf("ERROR: cannot find client/window\n");
+    printerr("cannot find client/window\n");
     return;
   }
-  printf("destroy client: %x, win: %lx\n", delc, delc->win);
+  //printf("destroy client: %x, win: %lx\n", delc, delc->win);
 
-  printll();
+  //printll();
 
   Client *lastchild = NULL;
   Client *firstchild = NULL;
-  for (Client *cl = headc; cl; cl = cl->next) {
+  for (Client *cl = delc; cl; cl = cl->next) {
     if (cl->parent == delc) {
       if (firstchild)
         lastchild = cl;
@@ -143,8 +127,8 @@ void unmanage(Window deletewin) {
   }
 
   if (firstchild && lastchild) {
-    printf("last: %lx", lastchild->win);
-    printf("first: %lx", firstchild->win);
+    /*printf("last: %lx", lastchild->win);
+    printf("first: %lx", firstchild->win);*/
     // detach
     lastchild->prev->next = lastchild->next;
     if (lastchild->next)
@@ -156,34 +140,15 @@ void unmanage(Window deletewin) {
     firstchild->prev = lastchild;
     lastchild->next = firstchild;
   }
-  printll();
 
+  //printll();
 
-  /*if (firstchild && lastchild) {
-    if (lastchild->next == firstchild) {
-      lastchild->next = firstchild->next;
-      firstchild->next = lastchild;
-      lastchild->prev->next = firstchild;
-      firstchild->prev = lastchild->prev;
-      lastchild->prev = firstchild;
-    } else {
-      lastchild->prev->next = firstchild;
-      firstchild->prev->next = firstchild->next;
-      firstchild->prev = lastchild->prev;
-      lastchild->prev = firstchild;
-      firstchild->next = lastchild;
-    }
-  }*/
-
-  if (delc == headc) {
+  if (delc == headc)
     headc = delc->next;
-  }
-  if (delc->next) {
+  if (delc->next)
     delc->next->prev = delc->prev;
-  }
-  if (delc->prev) {
+  if (delc->prev)
     delc->prev->next = delc->next;
-  }
 
   while (c) {
     if (c->parent == delc) {
@@ -196,12 +161,10 @@ void unmanage(Window deletewin) {
 
   if (delc == focused && delc->parent) {
     focused = (delc->parent ? delc->parent : NULL);
-    printf("focusing win: %lx\n", focused->win);
     setfocus(focused);
   }
 
   free(delc);
-  printll();
 }
 
 void enternotify(XEvent *ev) {
@@ -213,7 +176,6 @@ void enternotify(XEvent *ev) {
   while (c->next && c->win != ev->xcrossing.window) {
     c = c->next;
   }
-  printf("win: %lx\n", c->win);
   focused = c;
   setfocus(c);
 }
@@ -230,7 +192,7 @@ void setfocus(Client *c) {
     return;
   focused = c; // make sure focus is set
   //sendevent(tile, wmatom[WMTakeFocus]); // god know what this does
-  printf("focusing win: %lx\n", c->win);
+  //printf("focusing win: %lx\n", c->win);
   XSetInputFocus(dpy, c->win, RevertToPointerRoot, CurrentTime);
   XChangeProperty(dpy, root, netatom[NetActiveWindow],
       XA_WINDOW, 32, PropModeReplace,
@@ -312,7 +274,7 @@ void setupatoms(void) {
 // this code needs to be worked on
 // there is some posix stuff that dwm does that this code DOES NOT DO
 void spawn(char *argv[]) {
-  printf("\n%s\n", argv[0]);
+  printf("spawning: %s\n", argv[0]);
   if (fork() == 0) {
     //char *args[]={program,NULL};
     setsid();
@@ -349,7 +311,7 @@ int xerror(Display *dpy, XErrorEvent *ee) {
   // from dwm
   switch (ee->error_code) {
     case BadWindow:
-      printf("ERROR: BadWindow\n");
+      printerr("BadWindow\n");
       return 0;
   }
   fprintf(stderr, "%s: fatal error: request code=%d, error code=%d\n",
@@ -362,7 +324,7 @@ int main() {
   XEvent ev;
 
   if (!(dpy = XOpenDisplay(NULL))) {
-    fprintf(stderr, "failed to open display\n");
+    printerr("failed to open display\n");
     exitwm(1);
   }
 
@@ -381,7 +343,7 @@ int main() {
   XGrabKey(dpy, XKeysymToKeycode(dpy, XStringToKeysym("s")), Mod1Mask,
         root, True, GrabModeAsync, GrabModeAsync);
 
-  printf("Default screen: %d\nScreen width: %d\nScreen height: %d\n", screen, screenw, screenh);
+  //printf("Default screen: %d\nScreen width: %d\nScreen height: %d\n", screen, screenw, screenh);
 
   setup();
   setupatoms();
@@ -394,7 +356,7 @@ int main() {
     handler[ev.type](&ev);
   }
 
-  fprintf(stderr, "exiting with no errors\n");
+  printerr("exiting with no errors\n");
   exitwm(0);
   return 0;
 }
