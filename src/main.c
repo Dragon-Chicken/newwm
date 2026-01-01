@@ -33,7 +33,7 @@ void keypress(XEvent *ev) {
     spawn((char *[]){"st", NULL}); // what have I created....
   }
   if (keysymtostring(xkey) == 's' && xkey->state == Mod1Mask) {
-    spawn((char *[]){"rofi", "-normal-window", "-show", "drun", NULL}); // what have I created....
+    spawn((char *[]){"rofi", "-normal-window", "-show", "drun", NULL});
   }
 }
 
@@ -44,9 +44,10 @@ void maprequest(XEvent *ev) {
   newc->win = mapreq->window;
   newc->parent = NULL;
   newc->next = NULL;
+  newc->prev = NULL;
 
   XSelectInput(dpy, newc->win, EnterWindowMask | FocusChangeMask);
-  XSetWindowBorderWidth(dpy, newc->win, 4);
+  XSetWindowBorderWidth(dpy, newc->win, conf.bord_size);
 
   /* structure:
    * each index is a tile
@@ -69,8 +70,8 @@ void maprequest(XEvent *ev) {
       c = c->next;
 
     c->next = newc;
-    newc->parent = c; // this code WILL NEED TO change depending on the layout
-                            // better idea is to put the parent to the currently selected tile
+    newc->prev = c;
+    newc->parent = focused;
   }
   masterstacktile();
 }
@@ -99,17 +100,23 @@ void destroynotify(XEvent *ev) {
   }*/
 }
 
-void unmanage(Window deletewin) {
-  /*
-   * THIS DOES NOT HANDLE THE CASE WHERE A TILE WHO HAS CHILDREN GETS DELETED,
-   * THOSE CHILDREN STILL THINK THIS TILE EXISTS
-   * god knows if this ^ is fixed or not
-   */
+void printll(void) {
+  printf("\nlinked list:\n");
+  Client *c = headc;
+  while (c) {
+    printf("c: %-8lx, n: %-8lx, pr: %-8lx, pa: %-8lx, h: %d\n",
+        c->win,
+        (c->next != NULL ? c->next->win : 0L),
+        (c->prev != NULL ? c->prev->win : 0L),
+        (c->parent != NULL ? c->parent->win : 0L),
+        (c == headc ? 1 : 0));
+    c = c->next;
+  }
+}
 
-  Client *prevc = NULL;
+void unmanage(Window deletewin) {
   Client *c = headc;
   while (c && c->win != deletewin) {
-    prevc = c;
     c = c->next;
   }
 
@@ -120,12 +127,63 @@ void unmanage(Window deletewin) {
     printf("ERROR: cannot find client/window\n");
     return;
   }
-
   printf("destroy client: %x, win: %lx\n", delc, delc->win);
-  if (delc == headc)
+
+  printll();
+
+  Client *lastchild = NULL;
+  Client *firstchild = NULL;
+  for (Client *cl = headc; cl; cl = cl->next) {
+    if (cl->parent == delc) {
+      if (firstchild)
+        lastchild = cl;
+      else
+        firstchild = cl;
+    }
+  }
+
+  if (firstchild && lastchild) {
+    printf("last: %lx", lastchild->win);
+    printf("first: %lx", firstchild->win);
+    // detach
+    lastchild->prev->next = lastchild->next;
+    if (lastchild->next)
+      lastchild->next->prev = lastchild->prev;
+
+    // attach
+    lastchild->prev = firstchild->prev;
+    lastchild->prev->next = lastchild;
+    firstchild->prev = lastchild;
+    lastchild->next = firstchild;
+  }
+  printll();
+
+
+  /*if (firstchild && lastchild) {
+    if (lastchild->next == firstchild) {
+      lastchild->next = firstchild->next;
+      firstchild->next = lastchild;
+      lastchild->prev->next = firstchild;
+      firstchild->prev = lastchild->prev;
+      lastchild->prev = firstchild;
+    } else {
+      lastchild->prev->next = firstchild;
+      firstchild->prev->next = firstchild->next;
+      firstchild->prev = lastchild->prev;
+      lastchild->prev = firstchild;
+      firstchild->next = lastchild;
+    }
+  }*/
+
+  if (delc == headc) {
     headc = delc->next;
-  if (prevc)
-    prevc->next = delc->next;
+  }
+  if (delc->next) {
+    delc->next->prev = delc->prev;
+  }
+  if (delc->prev) {
+    delc->prev->next = delc->next;
+  }
 
   while (c) {
     if (c->parent == delc) {
@@ -137,12 +195,13 @@ void unmanage(Window deletewin) {
   }
 
   if (delc == focused && delc->parent) {
-    focused = delc->parent;
+    focused = (delc->parent ? delc->parent : NULL);
     printf("focusing win: %lx\n", focused->win);
-    XSetInputFocus(dpy, focused->win, RevertToPointerRoot, CurrentTime);
+    setfocus(focused);
   }
 
   free(delc);
+  printll();
 }
 
 void enternotify(XEvent *ev) {
@@ -183,28 +242,26 @@ void setfocus(Client *c) {
 
 void updateborders() {
   for (Client *c = headc; c; c = c->next) {
-    XSetWindowBorder(dpy, c->win, (c == focused ? 0xffff0000L : 0xff0000ffL));
+    XSetWindowBorder(dpy, c->win, (c == focused ? conf.bord_foc_col : conf.bord_nor_col));
   }
 }
 
 // "dwm tiling"
 void masterstacktile(void) {
   for (Client *c = headc; c; c = c->next) {
-    int vgaps = GAPS;
-    int hgaps = GAPS;
     if (c == headc) {
-      c->x = 0 + hgaps; c->y = 0 + vgaps;
-      c->w = screenw - (2*hgaps); c->h = screenh - (2*vgaps);
+      c->x = 0 + conf.hgaps; c->y = 0 + conf.vgaps;
+      c->w = screenw - (2*conf.hgaps + 2*conf.bord_size); c->h = screenh - (2*conf.vgaps + 2*conf.bord_size);
       continue;
     }
     if (c->parent == NULL) {
       continue;
     }
-    c->x = c->parent->x + (c->parent->w/2) + hgaps/2;
-    c->w = c->parent->w/2 - hgaps/2;
+    c->x = c->parent->x + (c->parent->w/2) + conf.hgaps/2 + conf.bord_size;
+    c->w = c->parent->w/2 - conf.hgaps/2 - conf.bord_size;
     c->y = c->parent->y;
     c->h = c->parent->h;
-    c->parent->w = c->parent->w/2 - hgaps/2;
+    c->parent->w = c->parent->w/2 - conf.hgaps/2 - conf.bord_size;
   }
 
   for (Client *c = headc; c; c = c->next) {
@@ -314,9 +371,7 @@ int main() {
   screenw = XDisplayWidth(dpy, screen);
   screenh = XDisplayHeight(dpy, screen);
 
-  // type of events we'll be handling
-  // use https://tronche.com/gui/x/xlib/events/processing-overview.html
-  // if you don't want to killl yourself
+  // https://tronche.com/gui/x/xlib/events/processing-overview.html
   XSelectInput(dpy, root, SubstructureRedirectMask | SubstructureNotifyMask | FocusChangeMask | EnterWindowMask);
 
   XGrabKey(dpy, XKeysymToKeycode(dpy, XStringToKeysym("q")), Mod1Mask,
@@ -328,8 +383,8 @@ int main() {
 
   printf("Default screen: %d\nScreen width: %d\nScreen height: %d\n", screen, screenw, screenh);
 
-  setupatoms();
   setup();
+  setupatoms();
   xerrorxlib = XSetErrorHandler(xerror);
 
   for (;;) {

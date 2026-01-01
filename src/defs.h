@@ -1,13 +1,14 @@
-#ifndef NEWWM_DEFS_H
-#define NEWWM_DEFS_H
-
-// user config stuff goes here
+#ifndef NWM_DEFS_H
+#define NWM_DEFS_H
 
 #define WM_NAME "nwm"
 
-// gaps
-// either gaps or v_gaps and h_gaps
-
-#define GAPS 40
+Config conf = {
+  .vgaps = 8,
+  .hgaps = 8,
+  .bord_size = 4,
+  .bord_foc_col = 0xffc4a7e7L,
+  .bord_nor_col = 0xff26233aL,
+};
 
 #endif
