@@ -16,6 +16,13 @@ struct Client {
   int x, y, w, h;
 };
 
+typedef struct Key Key;
+struct Key {
+  int mod;
+  int key;
+  void (*func)();
+};
+
 typedef struct Config Config;
 struct Config {
   int vgaps;
@@ -23,19 +30,22 @@ struct Config {
   int bord_size;
   long bord_foc_col;
   long bord_nor_col;
+  Key keys[];
 };
 
-char KeysymToString(XKeyEvent *xkey);
+char keysymtostring(XKeyEvent *xkey);
 
 int (*xerrorxlib)(Display *, XErrorEvent *);
 int xerror(Display *dpy, XErrorEvent *ee);
+int xerrordummy(Display *dpy, XErrorEvent *ee);
 void setup(void);
 void setupatoms(void);
 void masterstacktile(void);
 void updateborders(void);
 void spawn(char *argv[]);
+void kill(Client *c);
 void setfocus(Client *c);
-void sendevent(Client *c, Atom proto);
+int sendevent(Client *c, Atom proto);
 void unmanage(Window destroywin);
 
 void (*handler[LASTEvent])(XEvent*);
@@ -53,5 +63,7 @@ Client *focused;
 Display *dpy;
 Window root;
 int screenw, screenh;
+
+//#define NWM_DEBUG
 
 #endif

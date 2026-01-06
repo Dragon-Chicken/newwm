@@ -9,6 +9,7 @@ Config conf = {
   .bord_size = 4,
   .bord_foc_col = 0xffc4a7e7L,
   .bord_nor_col = 0xff26233aL,
+  .keys = {},
 };
 
 #endif
