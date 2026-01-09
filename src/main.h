@@ -1,8 +1,15 @@
 #ifndef NWM_MAIN_H
 #define NWM_MAIN_H
 
-enum { WMProtocols, WMDelete, WMState, WMTakeFocus, WMLast };
-enum { NetActiveWindow, NetWMName, NetWMCheck, NetLast }; // ewmh atoms
+#define WM_NAME "nwm"
+
+#define LENGTH(X) (int)(sizeof(X) / sizeof(X[0]))
+#define CLEANMASK(mask) (mask & ~(LockMask) & (Mod1Mask))
+
+enum { WMProtocols, WMDelete, WMState, WMTakeFocus, WMLast }; // wmatom
+enum { NetSupported, NetWMName, NetActiveWindow, NetWMCheck,
+  NetWMWindowType, NetWMWindowTypeNormal, NetWMWindowTypeDock,
+  NetLast }; // netatom
 
 Atom wmatom[WMLast];
 Atom netatom[NetLast];
@@ -14,24 +21,31 @@ struct Client {
   Client *next;
   Client *prev;
   int x, y, w, h;
+  bool floating;
+  bool manage;
 };
 
-typedef struct Key Key;
-struct Key {
+typedef union Arg {
+  int i;
+  char **s;
+} Arg;
+
+typedef struct Key {
   int mod;
-  int key;
-  void (*func)();
-};
+  int keysym;
+  void (*func)(Arg *);
+  Arg args;
+} Key;
 
-typedef struct Config Config;
-struct Config {
+typedef struct Config {
   int vgaps;
   int hgaps;
   int bord_size;
   long bord_foc_col;
   long bord_nor_col;
-  Key keys[];
-};
+  int keyslen;
+  Key *keys;
+} Config;
 
 char keysymtostring(XKeyEvent *xkey);
 
@@ -42,11 +56,12 @@ void setup(void);
 void setupatoms(void);
 void masterstacktile(void);
 void updateborders(void);
-void spawn(char *argv[]);
-void kill(Client *c);
+void spawn(Arg *arg);
+void kill(Arg *arg);
 void setfocus(Client *c);
 int sendevent(Client *c, Atom proto);
 void unmanage(Window destroywin);
+void exitwm(Arg *arg);
 
 void (*handler[LASTEvent])(XEvent*);
 void voidevent(XEvent *ev);
@@ -60,8 +75,11 @@ void enternotify(XEvent *ev);
 Client *headc;
 Client *focused;
 
+Config conf;
+
 Display *dpy;
 Window root;
+int screenx, screeny;
 int screenw, screenh;
 
 //#define NWM_DEBUG
