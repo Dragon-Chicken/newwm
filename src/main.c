@@ -64,17 +64,34 @@ void keypress(XEvent *ev) {
   }
 }
 
-Atom getatomprop(Client *c, Atom prop) {
+int getatomprop(Client *c, Atom prop, Atom *retatom) {
   int di;
   unsigned long dl;
   unsigned char *p = NULL;
-  Atom da, atom;
-  if (XGetWindowProperty(dpy, c->win, prop, 0L, sizeof(atom), False, XA_ATOM,
+  Atom da;
+  if (XGetWindowProperty(dpy, c->win, prop, 0L, sizeof(*retatom), False, XA_ATOM,
       &da, &di, &dl, &dl, &p) == Success && p) {
-    atom = *(Atom *)p;
+    *retatom = *(Atom *)p;
     XFree(p);
+    return 1;
   }
-  return atom;
+  return 0;
+}
+
+int getcardprop(Client *c, Atom prop, int *strut, unsigned long strutlen) {
+  int di;
+  unsigned long ni;
+  unsigned long dl;
+  unsigned char *p = NULL;
+  Atom da;
+  if (XGetWindowProperty(dpy, c->win, prop, 0L, strutlen, False, XA_CARDINAL,
+      &da, &di, &ni, &dl, &p) == Success && p) {
+    for (unsigned long i = 0; ni == strutlen && i <= ni; i++) {
+      strut[i] = ((long *)p)[i];
+    }
+    return 1;
+  }
+  return 0;
 }
 
 void manage(Window w, XWindowAttributes *wa) {
@@ -91,15 +108,34 @@ void manage(Window w, XWindowAttributes *wa) {
   newc->w = wa->width;
   newc->h = wa->height;
 
-  Atom wtype = getatomprop(newc, netatom[NetWMWindowType]);
-  if (wtype == netatom[NetWMWindowTypeDock]) {
-    screeny = newc->h + newc->y;
-    screenh -= screeny;
+  Atom wtype;
+  if (getatomprop(newc, netatom[NetWMWindowType], &wtype)) {
+    if (wtype == netatom[NetWMWindowTypeDock]) {
+      //screeny = newc->h + newc->y;
+      //screenh -= screeny;
 
-    XMapWindow(dpy, newc->win);
-    masterstacktile();
-    free(newc);
-    return;
+      int strut[12];
+      if (getcardprop(newc, netatom[NetWMStrutPartial], strut, 12)) {
+        // left edge
+        screenx += strut[0];
+        screenw -= screenx;
+
+        // right edge
+        screenw -= strut[1];
+
+        // top edge
+        screeny += strut[2];
+        screenh -= screeny;
+
+        // bottom edge
+        screenh -= strut[3];
+      }
+
+      XMapWindow(dpy, newc->win);
+      masterstacktile();
+      free(newc);
+      return;
+    }
   }
 
   XSelectInput(dpy, newc->win, EnterWindowMask|FocusChangeMask|PropertyChangeMask|StructureNotifyMask);
@@ -302,7 +338,7 @@ void updateborders() {
   }
 }
 
-// "dwm tiling"
+// yeah this name is never changing even though it's using something like bsp tiling xd
 void masterstacktile(void) {
   for (Client *c = headc; c; c = c->next) {
     if (!c->manage || c->floating) {
@@ -406,7 +442,11 @@ void setup(void) {
   arg[1] = NULL;
   conf.keys[3] = (Key){Mod1Mask, 'd', spawn, {.s = arg}};
 
+  arg = malloc(sizeof(char *) * 2);
+  arg[0] = "/home/ethan/neowm/startup";
+  arg[1] = NULL;
 
+  spawn(&(Arg){.s = arg}); // temp
   //spawn((char *[]){"feh", "--bg-fill", "/home/ethan/dotfiles/images/wallpaper.png", NULL});
 }
 
@@ -423,10 +463,12 @@ void setupatoms(void) {
   netatom[NetActiveWindow] = XInternAtom(dpy, "_NET_ACTIVE_WINDOW", False);
   netatom[NetWMCheck] = XInternAtom(dpy, "_NET_SUPPORTING_WM_CHECK", False);
   netatom[NetWMName] = XInternAtom(dpy, "_NET_WM_NAME", False);
+  netatom[NetWMStrutPartial] = XInternAtom(dpy, "_NET_WM_STRUT_PARTIAL", False);
 
   netatom[NetWMWindowType] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
   netatom[NetWMWindowTypeNormal] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_NORMAL", False);
   netatom[NetWMWindowTypeDock] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DOCK", False);
+  netatom[NetWMWindowTypePopup] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_POPUP_MENU", False);
 
   Window WmCheckWin = XCreateSimpleWindow(dpy, root, 0, 0, 1, 1, 0, 0, 0);
   XChangeProperty(dpy, root, netatom[NetWMCheck], XA_WINDOW, 32,
@@ -502,7 +544,7 @@ int main() {
   for (;;) {
     XNextEvent(dpy, &ev);
 #ifdef NWM_DEBUG
-    printf("event rec of type %d ", ev.type)Arg *arg;
+    printf("event rec of type %d ", ev.type);
 #endif
 
     handler[ev.type](&ev);

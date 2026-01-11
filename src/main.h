@@ -8,7 +8,8 @@
 
 enum { WMProtocols, WMDelete, WMState, WMTakeFocus, WMLast }; // wmatom
 enum { NetSupported, NetWMName, NetActiveWindow, NetWMCheck,
-  NetWMWindowType, NetWMWindowTypeNormal, NetWMWindowTypeDock,
+  NetWMStrutPartial,
+  NetWMWindowType, NetWMWindowTypeNormal, NetWMWindowTypeDock, NetWMWindowTypePopup,
   NetLast }; // netatom
 
 Atom wmatom[WMLast];
@@ -23,6 +24,7 @@ struct Client {
   int x, y, w, h;
   bool floating;
   bool manage;
+  bool bar;
 };
 
 typedef union Arg {
