@@ -8,6 +8,8 @@
 
 #include "main.h"
 
+
+// helper
 void printll(void) {
   printf("\nlinked list:\n");
   Client *c = headc;
@@ -27,41 +29,8 @@ void printerr(char *errstr) {
   fprintf(stderr, "%s: error: %s", WM_NAME, errstr);
 }
 
-void exitwm(Arg *arg) {
-  XCloseDisplay(dpy);
-  exit(arg->i);
-}
-
-void voidevent(XEvent *ev) {
-#ifdef NWM_DEBUG
-  printf("(void event)\n");
-#endif
-}
-
 char keysymtostring(XKeyEvent *xkey) {
   return *XKeysymToString(XLookupKeysym(xkey, 0));
-}
-
-void keypress(XEvent *ev) {
-#ifdef NWM_DEBUG
-  printf("(keypress)\n");
-#endif
-
-  XKeyEvent *xkey = &ev->xkey;
-  char keysym = keysymtostring(xkey);
-  for (int i = 0; i < conf.keyslen; i++) {
-    if (keysym == (conf.keys)[i].keysym &&
-        CLEANMASK(conf.keys[i].mod) == CLEANMASK(xkey->state) &&
-        conf.keys[i].func) {
-      conf.keys[i].func(&conf.keys[i].args);
-    }
-  }
-
-  // only here to make sure it's always possible to exit wm
-  if (keysymtostring(xkey) == 'q' && xkey->state == Mod1Mask) {
-    fprintf(stderr, "%s: exiting with no errors\n", WM_NAME);
-    exitwm(0);
-  }
 }
 
 int getatomprop(Client *c, Atom prop, Atom *retatom) {
@@ -94,67 +63,40 @@ int getcardprop(Client *c, Atom prop, int *strut, unsigned long strutlen) {
   return 0;
 }
 
-void manage(Window w, XWindowAttributes *wa) {
-  Client *newc = (Client *)malloc(sizeof(Client));
-  newc->win = w;
-  newc->parent = NULL;
-  newc->next = NULL;
-  newc->prev = NULL;
-  newc->floating = false;
-  newc->manage = true;
+bool intersect(int x1, int w1, int x2, int w2) {
+  return (x1<=x2 && (x1+w1>=x2 || x1+w1>=x2+w2)) ||
+         (x2<=x1 && (x2+w2>=x1 || x2+w2>=x1+w1));
+}
 
-  newc->x = wa->x;
-  newc->y = wa->y;
-  newc->w = wa->width;
-  newc->h = wa->height;
 
-  Atom wtype;
-  if (getatomprop(newc, netatom[NetWMWindowType], &wtype)) {
-    if (wtype == netatom[NetWMWindowTypeDock]) {
-      //screeny = newc->h + newc->y;
-      //screenh -= screeny;
 
-      int strut[12];
-      if (getcardprop(newc, netatom[NetWMStrutPartial], strut, 12)) {
-        // left edge
-        screenx += strut[0];
-        screenw -= screenx;
+// event handler
+void voidevent(XEvent *ev) {
+#ifdef NWM_DEBUG
+  printf("(void event)\n");
+#endif
+}
 
-        // right edge
-        screenw -= strut[1];
+void keypress(XEvent *ev) {
+#ifdef NWM_DEBUG
+  printf("(keypress)\n");
+#endif
 
-        // top edge
-        screeny += strut[2];
-        screenh -= screeny;
-
-        // bottom edge
-        screenh -= strut[3];
-      }
-
-      XMapWindow(dpy, newc->win);
-      masterstacktile();
-      free(newc);
-      return;
+  XKeyEvent *xkey = &ev->xkey;
+  KeySym keysym = XLookupKeysym(xkey, 0);
+  for (int i = 0; i < conf.keyslen; i++) {
+    if (keysym == (conf.keys)[i].keysym &&
+        CLEANMASK(conf.keys[i].mod) == CLEANMASK(xkey->state) &&
+        conf.keys[i].func) {
+      conf.keys[i].func(&conf.keys[i].args);
     }
   }
 
-  XSelectInput(dpy, newc->win, EnterWindowMask|FocusChangeMask|PropertyChangeMask|StructureNotifyMask);
-  XSetWindowBorderWidth(dpy, newc->win, conf.bord_size);
-
-  if (!headc) {
-    headc = newc;
-  } else {
-    Client *c = headc;
-    while (c->next)
-      c = c->next;
-
-    c->next = newc;
-    newc->prev = c;
-    newc->parent = focused;
+  // only here to make sure it's always possible to exit wm
+  if (keysymtostring(xkey) == 'q' && xkey->state == Mod1Mask) {
+    fprintf(stderr, "%s: exiting with no errors\n", WM_NAME);
+    exitwm(0);
   }
-
-  masterstacktile();
-  printll();
 }
 
 void maprequest(XEvent *ev) {
@@ -185,6 +127,130 @@ void destroynotify(XEvent *ev) {
   Window destroywin = ev->xdestroywindow.window;
 
   unmanage(destroywin);
+}
+
+void enternotify(XEvent *ev) {
+#ifdef NWM_DEBUG
+  printf("(enternotify)\n");
+#endif
+  if (ev->xcrossing.window == root)
+    return;
+
+  Client *c = headc;
+  while (c->next && c->win != ev->xcrossing.window)
+    c = c->next;
+  if (!c->manage)
+    return;
+  focused = c;
+  setfocus(c);
+}
+
+void focusin(XEvent *ev) {
+#ifdef NWM_DEBUG
+  printf("(focusin)\n");
+#endif
+  if (focused && ev->xfocus.window != focused->win) {
+    setfocus(focused);
+  }
+}
+
+
+// others
+int sendevent(Client *c, Atom proto) {
+  int n;
+  Atom *protocols;
+  int exists = 0;
+  XEvent ev;
+
+  if (XGetWMProtocols(dpy, c->win, &protocols, &n)) {
+    while (!exists && n--)
+      exists = protocols[n] == proto;
+    XFree(protocols);
+  }
+
+  if (exists) {
+    ev.type = ClientMessage;
+    //ev.xclient.type = ClientMessage;
+    ev.xclient.window = c->win;
+    ev.xclient.message_type = wmatom[WMProtocols];
+    ev.xclient.format = 32;
+    ev.xclient.data.l[0] = proto;
+    ev.xclient.data.l[1] = CurrentTime;
+    XSendEvent(dpy, c->win, False, NoEventMask, &ev);
+  }
+
+  return exists;
+}
+
+void setfocus(Client *c) {
+  if (c->win == root || c == NULL)
+    return;
+  XDeleteProperty(dpy, root, netatom[NetActiveWindow]);
+  focused = c; // make sure focus is set
+  XSetInputFocus(dpy, c->win, RevertToPointerRoot, CurrentTime);
+  XChangeProperty(dpy, root, netatom[NetActiveWindow],
+      XA_WINDOW, 32, PropModeReplace,
+      (unsigned char *) &(c->win), 1);
+  sendevent(c, wmatom[WMTakeFocus]); // god know what this does
+  
+  updateborders();
+}
+
+void manage(Window w, XWindowAttributes *wa) {
+  Client *newc = (Client *)malloc(sizeof(Client));
+  newc->win = w;
+  newc->parent = NULL;
+  newc->next = NULL;
+  newc->prev = NULL;
+  newc->floating = false;
+  newc->manage = true;
+  newc->dock = false;
+
+  newc->x = wa->x;
+  newc->y = wa->y;
+  newc->w = wa->width;
+  newc->h = wa->height;
+
+  Atom wtype;
+  if (getatomprop(newc, netatom[NetWMWindowType], &wtype)) {
+    if (wtype == netatom[NetWMWindowTypeDock]) {
+      int strut[12];
+      if (getcardprop(newc, netatom[NetWMStrutPartial], strut, LENGTH(strut))) {
+        // left edge
+        sxoff += strut[0];
+        swoff -= sxoff;
+        // right edge
+        swoff -= strut[1];
+        // top edge
+        syoff += strut[2];
+        shoff -= syoff;
+        // bottom edge
+        shoff -= strut[3];
+      }
+
+      XMapWindow(dpy, newc->win);
+      masterstacktile();
+      free(newc);
+      return;
+    }
+  }
+
+  XSelectInput(dpy, newc->win, EnterWindowMask|FocusChangeMask|PropertyChangeMask|StructureNotifyMask);
+  XSetWindowBorderWidth(dpy, newc->win, conf.bord_size);
+
+  if (!headc) {
+    headc = newc;
+  } else {
+    Client *c = headc;
+    while (c->next)
+      c = c->next;
+    c->next = newc;
+    newc->prev = c;
+    newc->parent = focused;
+  }
+
+  masterstacktile();
+  printll();
 }
 
 void unmanage(Window deletewin) {
@@ -235,8 +301,6 @@ void unmanage(Window deletewin) {
     lastchild->next = firstchild;
   }
 
-  //printll();
-
   if (delc == headc)
     headc = delc->next;
   if (delc->next)
@@ -266,87 +330,17 @@ void unmanage(Window deletewin) {
   masterstacktile();
 }
 
-void enternotify(XEvent *ev) {
-#ifdef NWM_DEBUG
-  printf("(enternotify)\n");
-#endif
-  if (ev->xcrossing.window == root)
-    return;
-
-  Client *c = headc;
-  while (c->next && c->win != ev->xcrossing.window)
-    c = c->next;
-  if (!c->manage)
-    return;
-  focused = c;
-  setfocus(c);
-}
-
-void focusin(XEvent *ev) {
-#ifdef NWM_DEBUG
-  printf("(focusin)\n");
-#endif
-  if (focused && ev->xfocus.window != focused->win) {
-    setfocus(focused);
-  }
-}
-
-int sendevent(Client *c, Atom proto) {
-  int n;
-  Atom *protocols;
-  int exists = 0;
-  XEvent ev;
-
-  if (XGetWMProtocols(dpy, c->win, &protocols, &n)) {
-    while (!exists && n--)
-      exists = protocols[n] == proto;
-    XFree(protocols);
-  }
-
-  if (exists) {
-    ev.type = ClientMessage;
-    //ev.xclient.type = ClientMessage;
-    ev.xclient.window = c->win;
-    ev.xclient.message_type = wmatom[WMProtocols];
-    ev.xclient.format = 32;
-    ev.xclient.data.l[0] = proto;
-    ev.xclient.data.l[1] = CurrentTime;
-    XSendEvent(dpy, c->win, False, NoEventMask, &ev);
-  }
-
-  return exists;
-}
-
-void setfocus(Client *c) {
-  if (c->win == root || c == NULL)
-    return;
-  XDeleteProperty(dpy, root, netatom[NetActiveWindow]);
-  focused = c; // make sure focus is set
-  XSetInputFocus(dpy, c->win, RevertToPointerRoot, CurrentTime);
-  XChangeProperty(dpy, root, netatom[NetActiveWindow],
-      XA_WINDOW, 32, PropModeReplace,
-      (unsigned char *) &(c->win), 1);
-  sendevent(c, wmatom[WMTakeFocus]); // god know what this does
-  
-  updateborders();
-}
-
-void updateborders() {
-  for (Client *c = headc; c; c = c->next) {
-    if (c->manage)
-      XSetWindowBorder(dpy, c->win, (c == focused ? conf.bord_foc_col : conf.bord_nor_col));
-  }
-}
-
 // yeah this name is never changing even though it's using something like bsp tiling xd
 void masterstacktile(void) {
   for (Client *c = headc; c; c = c->next) {
-    if (!c->manage || c->floating) {
+    if (!c->manage || c->floating || c->dock) {
       continue;
     }
     if (c == headc) {
-      c->x = screenx + conf.hgaps; c->y = screeny + conf.vgaps;
-      c->w = screenw - (2*conf.hgaps + 2*conf.bord_size); c->h = screenh - (2*conf.vgaps + 2*conf.bord_size);
+      c->x = (screenx + sxoff) + conf.hgaps;
+      c->y = (screeny + syoff) + conf.vgaps;
+      c->w = (screenw + swoff) - (2*conf.hgaps + 2*conf.bord_size);
+      c->h = (screenh + shoff) - (2*conf.vgaps + 2*conf.bord_size);
       continue;
     }
     if (!c->parent) {
@@ -368,7 +362,7 @@ void masterstacktile(void) {
   }
 
   for (Client *c = headc; c; c = c->next) {
-    if (c->manage) {
+    if (c->manage && !c->dock) {
       XMoveResizeWindow(dpy, c->win,
           c->x, c->y, c->w, c->h);
     }
@@ -378,6 +372,13 @@ void masterstacktile(void) {
   updateborders();
 }
 
+void updateborders() {
+  for (Client *c = headc; c; c = c->next) {
+    if (c->manage)
+      XSetWindowBorder(dpy, c->win, (c == focused ? conf.bord_foc_col : conf.bord_nor_col));
+  }
+}
+
 void setup(void) {
 
   int screen = DefaultScreen(dpy);
@@ -385,21 +386,11 @@ void setup(void) {
   screenw = XDisplayWidth(dpy, screen);
   screenh = XDisplayHeight(dpy, screen);
   // for docks/bars
-  screenx = 0;
-  screeny = 0;
-  //screenh -= screeny;
+  sxoff = 0;
+  syoff = 0;
 
   // https://tronche.com/gui/x/xlib/events/processing-overview.html
   XSelectInput(dpy, root, SubstructureRedirectMask|SubstructureNotifyMask|FocusChangeMask|EnterWindowMask|PropertyChangeMask);
-
-  XGrabKey(dpy, XKeysymToKeycode(dpy, XStringToKeysym("q")), Mod1Mask,
-        root, True, GrabModeAsync, GrabModeAsync);
-  XGrabKey(dpy, XKeysymToKeycode(dpy, XStringToKeysym("a")), Mod1Mask,
-        root, True, GrabModeAsync, GrabModeAsync);
-  XGrabKey(dpy, XKeysymToKeycode(dpy, XStringToKeysym("s")), Mod1Mask,
-        root, True, GrabModeAsync, GrabModeAsync);
-  XGrabKey(dpy, XKeysymToKeycode(dpy, XStringToKeysym("x")), Mod1Mask,
-        root, True, GrabModeAsync, GrabModeAsync);
 
   headc = NULL;
   for (int i = 0; i < LASTEvent; i++)
@@ -417,17 +408,20 @@ void setup(void) {
     .bord_size = 4,
     .bord_foc_col = 0xffc4a7e7L,
     .bord_nor_col = 0xff26233aL,
-    .keyslen = 4,
+    .keyslen = 9,
   };
 
+  // temp
   conf.keys = malloc(sizeof(Key) * conf.keyslen);
+
+  conf.keys[0] = (Key){Mod1Mask, XStringToKeysym("q"), exitwm, {0}};
 
   char **arg = malloc(sizeof(char *) * 2);
   arg[0] = "st";
   arg[1] = NULL;
-  conf.keys[0] = (Key){Mod1Mask, 'a', spawn, {.s = arg}};
+  conf.keys[1] = (Key){Mod1Mask, XStringToKeysym("a"), spawn, {.s = arg}};
 
-  conf.keys[1] = (Key){Mod1Mask, 'x', kill, {0}};
+  conf.keys[2] = (Key){Mod1Mask, XStringToKeysym("x"), kill, {0}};
 
   arg = malloc(sizeof(char *) * 5);
   arg[0] = "rofi";
@@ -435,19 +429,29 @@ void setup(void) {
   arg[2] = "-show";
   arg[3] = "drun";
   arg[4] = NULL;
-  conf.keys[2] = (Key){Mod1Mask, 's', spawn, {.s = arg}};
+  conf.keys[3] = (Key){Mod1Mask, XStringToKeysym("s"), spawn, {.s = arg}};
 
   arg = malloc(sizeof(char *) * 2);
   arg[0] = "polybar";
   arg[1] = NULL;
-  conf.keys[3] = (Key){Mod1Mask, 'd', spawn, {.s = arg}};
+  conf.keys[4] = (Key){Mod1Mask, XStringToKeysym("d"), spawn, {.s = arg}};
 
-  arg = malloc(sizeof(char *) * 2);
+  conf.keys[5] = (Key){Mod1Mask, XStringToKeysym("h"), focusswitch, {0}};
+  conf.keys[6] = (Key){Mod1Mask, XStringToKeysym("l"), focusswitch, {1}};
+  conf.keys[7] = (Key){Mod1Mask, XStringToKeysym("k"), focusswitch, {2}};
+  conf.keys[8] = (Key){Mod1Mask, XStringToKeysym("j"), focusswitch, {3}};
+
+  // grab input
+  for (int i = 0; i < conf.keyslen; i++) {
+    XGrabKey(dpy, XKeysymToKeycode(dpy, conf.keys[i].keysym), conf.keys[i].mod,
+          root, True, GrabModeAsync, GrabModeAsync);
+  }
+
+  // startup script
+  /*arg = malloc(sizeof(char *) * 2);
   arg[0] = "/home/ethan/neowm/startup";
   arg[1] = NULL;
-
-  spawn(&(Arg){.s = arg}); // temp
-  //spawn((char *[]){"feh", "--bg-fill", "/home/ethan/dotfiles/images/wallpaper.png", NULL});
+  spawn(&(Arg){.s = arg}); // temp*/
 }
 
 void setupatoms(void) {
@@ -496,6 +500,46 @@ void spawn(Arg *arg) {
   }
 }
 
+// 0 left, 1 right, 2 up, 3 down
+void focusswitch(Arg *args) {
+  Client *closest = NULL;
+  // need to set to something very high xd
+  int closx = screenw*2;
+  int closy = screenh*2;
+  int focmidx = (focused->x*2 + focused->w)/2;
+  int focmidy = (focused->y*2 + focused->h)/2;
+
+  Client *c = headc;
+  while (c) {
+    if (c == focused) {
+      c = c->next;
+      continue;
+    }
+
+    int cmidx = (c->x*2+c->w)/2;
+    int cmidy = (c->y*2+c->h)/2;
+
+    if ((abs(cmidx-focmidx) + abs(cmidy-focmidy) <= closx + closy) &&
+        ((args->i == 0 && cmidx-focmidx <= 0) ||
+         (args->i == 1 && cmidx-focmidx >= 0) ||
+         (args->i == 2 && cmidy-focmidy <= 0) ||
+         (args->i == 3 && cmidy-focmidy >= 0)) &&
+        ((args->i <= 1 && intersect(c->y, c->h, focused->y, focused->h)) ||
+         (args->i >= 2 && intersect(c->x, c->w, focused->x, focused->w)))) {
+      closx = abs(cmidx-focmidx);
+      closy = abs(cmidy-focmidy);
+      closest = c;
+    }
+
+    c = c->next;
+  }
+
+  if (closest) {
+    focused = closest;
+    setfocus(closest);
+  }
+}
+
 void kill(Arg *arg) {
   if (!focused)
     return;
@@ -509,6 +553,11 @@ void kill(Arg *arg) {
     XSetErrorHandler(xerror);
     XUngrabServer(dpy);
   }
+}
+
+void exitwm(Arg *arg) {
+  XCloseDisplay(dpy);
+  exit(arg->i);
 }
 
 int xerror(Display *dpy, XErrorEvent *ee) {
@@ -526,7 +575,6 @@ int xerror(Display *dpy, XErrorEvent *ee) {
 int xerrordummy(Display *dpy, XErrorEvent *ee) {
   return 0;
 }
-
 
 int main() {
   XEvent ev;

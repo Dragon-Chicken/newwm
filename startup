@@ -1,5 +1,3 @@
 #/bin/sh
-#startup script
-
 polybar &
 feh --bg-fill ~/dotfiles/images/wallpaper.png &
