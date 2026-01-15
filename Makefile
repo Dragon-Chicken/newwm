@@ -1,8 +1,8 @@
 build:
-	gcc -O2 -Wall -Wextra -lm -lX11 src/*.c -o nwm
+	gcc -O2 -Wall -Wextra -lX11 src/*.c -o nwm
 
 xephyr:
-	startx ./nwm -- /usr/bin/Xephyr -screen 1000x1000 :1
+	startx ./nwm -- /usr/bin/Xephyr -screen 1290x720 :1
 
 clean:
 	rm nwm

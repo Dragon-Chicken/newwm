@@ -4,12 +4,13 @@
 #define WM_NAME "nwm"
 
 #define LENGTH(X) (int)(sizeof(X) / sizeof(X[0]))
-#define CLEANMASK(mask) (mask & ~(LockMask) & (Mod1Mask))
+#define CLEANMASK(mask) (mask & ~(LockMask) & (ShiftMask|ControlMask|Mod1Mask|Mod2Mask|Mod3Mask|Mod4Mask|Mod5Mask))
 
 enum { WMProtocols, WMDelete, WMState, WMTakeFocus, WMLast }; // wmatom
 enum { NetSupported, NetWMName, NetActiveWindow, NetWMCheck,
   NetWMStrutPartial,
   NetWMWindowType, NetWMWindowTypeNormal, NetWMWindowTypeDock, NetWMWindowTypePopup,
+  NetWMState, NetWMStateAbove,
   NetLast }; // netatom
 
 Atom wmatom[WMLast];
@@ -22,6 +23,7 @@ struct Client {
   Client *next;
   Client *prev;
   int x, y, w, h;
+  int split; // 0 - 100
   bool floating;
   bool manage;
   bool dock;
@@ -52,7 +54,7 @@ typedef struct Config {
 void printll(void);
 void printerr(char *errstr);
 char keysymtostring(XKeyEvent *xkey);
-int getatomprop(Client *c, Atom prop, Atom *retatom);
+int getatomprop(Client *c, Atom prop, Atom *retatom, unsigned long retatomlen);
 int getcardprop(Client *c, Atom prop, int *strut, unsigned long strutlen);
 bool intersect(int x1, int w1, int x2, int w2);
 
@@ -75,6 +77,7 @@ void setup(void);
 void setupatoms(void);
 void spawn(Arg *arg);
 void focusswitch(Arg *arg);
+void growclient(Arg *arg);
 void kill(Arg *arg);
 void exitwm(Arg *arg);
 int (*xerrorxlib)(Display *, XErrorEvent *);

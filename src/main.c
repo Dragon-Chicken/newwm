@@ -33,14 +33,18 @@ char keysymtostring(XKeyEvent *xkey) {
   return *XKeysymToString(XLookupKeysym(xkey, 0));
 }
 
-int getatomprop(Client *c, Atom prop, Atom *retatom) {
+int getatomprop(Client *c, Atom prop, Atom *retatom, unsigned long retatomlen) {
   int di;
+  unsigned long ni;
   unsigned long dl;
   unsigned char *p = NULL;
   Atom da;
-  if (XGetWindowProperty(dpy, c->win, prop, 0L, sizeof(*retatom), False, XA_ATOM,
-      &da, &di, &dl, &dl, &p) == Success && p) {
-    *retatom = *(Atom *)p;
+  if (XGetWindowProperty(dpy, c->win, prop, 0L, retatomlen, False, XA_ATOM,
+      &da, &di, &ni, &dl, &p) == Success && p) {
+    for (unsigned long i = 0; ni == retatomlen && i <= ni; i++) {
+      retatom[i] = ((Atom *)p)[i];
+    }
+    /**retatom = *(Atom *)p;*/
     XFree(p);
     return 1;
   }
@@ -58,6 +62,7 @@ int getcardprop(Client *c, Atom prop, int *strut, unsigned long strutlen) {
     for (unsigned long i = 0; ni == strutlen && i <= ni; i++) {
       strut[i] = ((long *)p)[i];
     }
+    XFree(p);
     return 1;
   }
   return 0;
@@ -67,7 +72,6 @@ bool intersect(int x1, int w1, int x2, int w2) {
   return (x1<=x2 && (x1+w1>=x2 || x1+w1>=x2+w2)) ||
          (x2<=x1 && (x2+w2>=x1 || x2+w2>=x1+w1));
 }
-
 
 
 // event handler
@@ -183,8 +187,9 @@ int sendevent(Client *c, Atom proto) {
 }
 
 void setfocus(Client *c) {
-  if (c->win == root || c == NULL)
+  if (!c || c->win == root) {
     return;
+  }
   XDeleteProperty(dpy, root, netatom[NetActiveWindow]);
   focused = c; // make sure focus is set
   XSetInputFocus(dpy, c->win, RevertToPointerRoot, CurrentTime);
@@ -210,9 +215,10 @@ void manage(Window w, XWindowAttributes *wa) {
   newc->y = wa->y;
   newc->w = wa->width;
   newc->h = wa->height;
+  newc->split = 10;
 
   Atom wtype;
-  if (getatomprop(newc, netatom[NetWMWindowType], &wtype)) {
+  if (getatomprop(newc, netatom[NetWMWindowType], &wtype, 1)) {
     if (wtype == netatom[NetWMWindowTypeDock]) {
       int strut[12];
       if (getcardprop(newc, netatom[NetWMStrutPartial], strut, LENGTH(strut))) {
@@ -240,6 +246,7 @@ void manage(Window w, XWindowAttributes *wa) {
 
   if (!headc) {
     headc = newc;
+    focused = newc;
   } else {
     Client *c = headc;
     while (c->next)
@@ -250,30 +257,27 @@ void manage(Window w, XWindowAttributes *wa) {
   }
 
   masterstacktile();
+#ifdef DEBUG
   printll();
+#endif
 }
 
 void unmanage(Window deletewin) {
-  if (!deletewin) {
+  if (!deletewin)
     return;
-  }
 
-  Client *c = headc;
-  while (c && c->win != deletewin) {
-    c = c->next;
-  }
-
-  // try to somehow remove this and just use c
-  Client *delc = c;
+  Client *delc = headc;
+  while (delc && delc->win != deletewin)
+    delc = delc->next;
 
   if (!delc) {
-    printerr("cannot find client/window\n");
+    //printerr("cannot find client/window\n");
     return;
   }
 
-  //printf("destroy client: %x, win: %lx, manage: %d\n", delc, delc->win, delc->manage);
-
+#ifdef DEBUG
   printll();
+#endif
 
   Client *lastchild = NULL;
   Client *firstchild = NULL;
@@ -287,8 +291,6 @@ void unmanage(Window deletewin) {
   }
 
   if (firstchild && lastchild) {
-    /*printf("last: %lx", lastchild->win);
-    printf("first: %lx", firstchild->win);*/
     // detach
     lastchild->prev->next = lastchild->next;
     if (lastchild->next)
@@ -308,17 +310,21 @@ void unmanage(Window deletewin) {
   if (delc->prev)
     delc->prev->next = delc->next;
 
-  while (c) {
-    if (c->parent == delc) {
-      c->parent = delc->parent;
+  for (Client *cl = delc; cl; cl = cl->next) {
+    if (cl->parent == delc) {
+      cl->parent = delc->parent;
       if (delc->parent == NULL)
-        delc->parent = c;
+        delc->parent = cl;
     }
-    c = c->next;
   }
 
-  if (delc == focused && delc->parent) {
-    focused = delc->parent;
+  if (delc == focused) {
+    if (delc->parent)
+      focused = delc->parent;
+    else if (delc->next)
+      focused = delc->next;
+    else
+      focused = NULL;
     setfocus(focused);
   }
 
@@ -347,17 +353,17 @@ void masterstacktile(void) {
       continue;
     }
     if (c->parent->w >= c->parent->h) {
-      c->x = c->parent->x + (c->parent->w/2) + conf.hgaps/2 + conf.bord_size;
-      c->w = c->parent->w/2 - conf.hgaps/2 - conf.bord_size;
+      c->x = c->parent->x + (c->parent->w*(100-c->split))/100 + conf.hgaps/2 + conf.bord_size;
+      c->w = (c->parent->w*c->split)/100 - conf.hgaps/2 - conf.bord_size;
       c->y = c->parent->y;
       c->h = c->parent->h;
-      c->parent->w = c->parent->w/2 - conf.hgaps/2 - conf.bord_size;
+      c->parent->w = (c->parent->w*(100-c->split))/100 - conf.hgaps/2 - conf.bord_size;
     } else {
       c->x = c->parent->x;
       c->w = c->parent->w;
-      c->y = c->parent->y + (c->parent->h/2) + conf.vgaps/2 + conf.bord_size;
-      c->h = c->parent->h/2 - conf.vgaps/2 - conf.bord_size;
-      c->parent->h = c->parent->h/2 - conf.vgaps/2 - conf.bord_size;
+      c->y = c->parent->y + (c->parent->h*(100-c->split))/100 + conf.vgaps/2 + conf.bord_size;
+      c->h = (c->parent->h*c->split)/100 - conf.vgaps/2 - conf.bord_size;
+      c->parent->h = (c->parent->h*(100-c->split))/100 - conf.vgaps/2 - conf.bord_size;
     }
   }
 
@@ -408,7 +414,7 @@ void setup(void) {
     .bord_size = 4,
     .bord_foc_col = 0xffc4a7e7L,
     .bord_nor_col = 0xff26233aL,
-    .keyslen = 9,
+    .keyslen = 13,
   };
 
   // temp
@@ -423,12 +429,11 @@ void setup(void) {
 
   conf.keys[2] = (Key){Mod1Mask, XStringToKeysym("x"), kill, {0}};
 
-  arg = malloc(sizeof(char *) * 5);
+  arg = malloc(sizeof(char *) * 4);
   arg[0] = "rofi";
-  arg[1] = "-normal-window";
-  arg[2] = "-show";
-  arg[3] = "drun";
-  arg[4] = NULL;
+  arg[1] = "-show";
+  arg[2] = "drun";
+  arg[3] = NULL;
   conf.keys[3] = (Key){Mod1Mask, XStringToKeysym("s"), spawn, {.s = arg}};
 
   arg = malloc(sizeof(char *) * 2);
@@ -440,6 +445,11 @@ void setup(void) {
   conf.keys[6] = (Key){Mod1Mask, XStringToKeysym("l"), focusswitch, {1}};
   conf.keys[7] = (Key){Mod1Mask, XStringToKeysym("k"), focusswitch, {2}};
   conf.keys[8] = (Key){Mod1Mask, XStringToKeysym("j"), focusswitch, {3}};
+
+  conf.keys[9]  = (Key){Mod1Mask|ShiftMask, XStringToKeysym("h"), growclient, {0}};
+  conf.keys[10] = (Key){Mod1Mask|ShiftMask, XStringToKeysym("l"), growclient, {1}};
+  conf.keys[11] = (Key){Mod1Mask|ShiftMask, XStringToKeysym("k"), growclient, {2}};
+  conf.keys[12] = (Key){Mod1Mask|ShiftMask, XStringToKeysym("j"), growclient, {3}};
 
   // grab input
   for (int i = 0; i < conf.keyslen; i++) {
@@ -474,6 +484,9 @@ void setupatoms(void) {
   netatom[NetWMWindowTypeDock] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DOCK", False);
   netatom[NetWMWindowTypePopup] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_POPUP_MENU", False);
 
+  netatom[NetWMState] = XInternAtom(dpy, "_NET_WM_STATE", False);
+  netatom[NetWMStateAbove] = XInternAtom(dpy, "_NET_WM_STATE_ABOVE", False);
+
   Window WmCheckWin = XCreateSimpleWindow(dpy, root, 0, 0, 1, 1, 0, 0, 0);
   XChangeProperty(dpy, root, netatom[NetWMCheck], XA_WINDOW, 32,
       PropModeReplace, (unsigned char*) &WmCheckWin, 1);
@@ -500,8 +513,7 @@ void spawn(Arg *arg) {
   }
 }
 
-// 0 left, 1 right, 2 up, 3 down
-void focusswitch(Arg *args) {
+Client *getcloseclient(Arg *arg) {
   Client *closest = NULL;
   // need to set to something very high xd
   int closx = screenw*2;
@@ -520,12 +532,79 @@ void focusswitch(Arg *args) {
     int cmidy = (c->y*2+c->h)/2;
 
     if ((abs(cmidx-focmidx) + abs(cmidy-focmidy) <= closx + closy) &&
-        ((args->i == 0 && cmidx-focmidx <= 0) ||
-         (args->i == 1 && cmidx-focmidx >= 0) ||
-         (args->i == 2 && cmidy-focmidy <= 0) ||
-         (args->i == 3 && cmidy-focmidy >= 0)) &&
-        ((args->i <= 1 && intersect(c->y, c->h, focused->y, focused->h)) ||
-         (args->i >= 2 && intersect(c->x, c->w, focused->x, focused->w)))) {
+        ((arg->i == 0 && cmidx-focmidx <= 0) ||
+         (arg->i == 1 && cmidx-focmidx >= 0) ||
+         (arg->i == 2 && cmidy-focmidy <= 0) ||
+         (arg->i == 3 && cmidy-focmidy >= 0)) &&
+        ((arg->i <= 1 && intersect(c->y, c->h, focused->y, focused->h)) ||
+         (arg->i >= 2 && intersect(c->x, c->w, focused->x, focused->w)))) {
+      closx = abs(cmidx-focmidx);
+      closy = abs(cmidy-focmidy);
+      closest = c;
+    }
+
+    c = c->next;
+  }
+  return closest;
+}
+
+// 0 left, 1 right, 2 up, 3 down
+void growclient(Arg *arg) {
+  if (!focused)
+    return;
+
+  //printf("split size = %d\n", focused->split);
+
+  Client *closest = getcloseclient(arg);
+
+  // shrink if no client
+  if (!closest) {
+    printf("no client\n");
+    return;
+  }
+
+  printll();
+
+  if (closest == focused->parent) {
+    focused->split += 1;
+  }
+  if (focused->split > 100)
+    focused->split = 100;
+  if (focused->split < 10)
+    focused->split = 10;
+
+  masterstacktile();
+}
+
+// 0 left, 1 right, 2 up, 3 down
+void focusswitch(Arg *arg) {
+  if (!focused)
+    return;
+
+  Client *closest = NULL;
+  // need to set to something very high xd
+  int closx = screenw*2;
+  int closy = screenh*2;
+  int focmidx = (focused->x*2 + focused->w)/2;
+  int focmidy = (focused->y*2 + focused->h)/2;
+
+  Client *c = headc;
+  while (c) {
+    if (c == focused) {
+      c = c->next;
+      continue;
+    }
+
+    int cmidx = (c->x*2+c->w)/2;
+    int cmidy = (c->y*2+c->h)/2;
+
+    if ((abs(cmidx-focmidx) + abs(cmidy-focmidy) <= closx + closy) &&
+        ((arg->i == 0 && cmidx-focmidx <= 0) ||
+         (arg->i == 1 && cmidx-focmidx >= 0) ||
+         (arg->i == 2 && cmidy-focmidy <= 0) ||
+         (arg->i == 3 && cmidy-focmidy >= 0)) &&
+        ((arg->i <= 1 && intersect(c->y, c->h, focused->y, focused->h)) ||
+         (arg->i >= 2 && intersect(c->x, c->w, focused->x, focused->w)))) {
       closx = abs(cmidx-focmidx);
       closy = abs(cmidy-focmidy);
       closest = c;
